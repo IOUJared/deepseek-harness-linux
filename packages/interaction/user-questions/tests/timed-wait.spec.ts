@@ -46,6 +46,39 @@ describe('foreground question claims', () => {
     expect(wait.signal.reason).toBe(timeout)
   })
 
+  it('admits a zero-duration sibling while an existing claim holds the elapsed deadline', async () => {
+    const { wait, timeout } = start()
+    const first = new AbortController()
+    const firstStream = wait.attach(first.signal)[Symbol.asyncIterator]()
+    await firstStream.next()
+    const firstEnd = firstStream.next()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(wait.signal.aborted).toBe(false)
+
+    const sibling = new AbortController()
+    const siblingStream = wait.attach(sibling.signal)[Symbol.asyncIterator]()
+    expect(await siblingStream.next()).toEqual({ done: false, value: { remainingMs: 0 } })
+    const siblingEnd = siblingStream.next()
+    first.abort()
+    await firstEnd
+    await vi.advanceTimersByTimeAsync(0)
+    expect(wait.signal.aborted).toBe(false)
+    sibling.abort()
+    await siblingEnd
+    await vi.advanceTimersByTimeAsync(0)
+    expect(wait.signal.reason).toBe(timeout)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not acquire a claim by constructing an unconsumed iterator', async () => {
+    const { wait, timeout } = start()
+    const stream = wait.attach(new AbortController().signal)[Symbol.asyncIterator]()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(wait.signal.reason).toBe(timeout)
+    expect(await stream.next()).toEqual({ done: true, value: undefined })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('resumes the original remaining duration after a claim disconnects', async () => {
     const { wait } = start()
     const client = new AbortController()

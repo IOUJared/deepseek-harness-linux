@@ -15,6 +15,7 @@ import { en, zh } from '../src/client/locales.ts'
 import { createBrowserStore } from '../src/client/browser/store.ts'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { DesktopBrowserBridge, DesktopBrowserLeaseId } from '../src/types.ts'
+import { tauriHarness } from './tauri-harness.client.ts'
 
 const contexts: Context[] = []
 
@@ -115,6 +116,34 @@ describe('ui-sidebar-browser apply', () => {
     } finally {
       await h.fiber.dispose()
       host.remove()
+    }
+  })
+
+  it('selects the optional Linux native carrier without a dshDesktop marker and releases it on HMR', async () => {
+    const native = tauriHarness()
+    vi.stubGlobal('dshLinuxBrowser', native.bridge)
+    const h = await boot('linux', 'web')
+    const signal = new AbortController()
+    const tabId = 'native-apply-tab' as TabId
+    try {
+      expect(h.tabs.get(BROWSER_KIND)?.keepMounted).toBe(true)
+      expect(globalThis).not.toHaveProperty('dshDesktop')
+      const injectFace = h.registered.find(entry => entry.name === 'sidebar.right.pane.tab')!.inject as
+        (sessionId: string, actions: Parameters<BrowserInjected['rebind']>[0]) => BrowserInjected
+      const store = createBrowserStore().create('native-apply-store')
+      const controller = injectFace('session', store.actions)
+      controller.mount({ tabId, signal: signal.signal, viewportId: native.host.id, applicationOrigin: window.location.origin,
+        initial: undefined, initialUrl: 'https://example.test/', openTab: vi.fn() })
+      await vi.waitFor(() => { expect(native.bridge.open).toHaveBeenCalledWith(native.lease, 'https://example.test/', 1) })
+      expect(native.host.querySelector('iframe,webview')).toBeNull()
+      expect(native.bridge.acquire).toHaveBeenCalledWith('session:session')
+      await h.fiber.dispose()
+      expect(native.bridge.release).toHaveBeenCalledExactlyOnceWith(native.lease)
+      expect(controller.keyedHooks.browserState(tabId)).toBeUndefined()
+    } finally {
+      signal.abort()
+      await h.fiber.dispose()
+      await native.dispose()
     }
   })
 

@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/client/ui-sidebar-browser/docs/native-browser/README.md
+/:
+  en: 8b88f4fb6f3474cf
+  zh: 7b00e9a1c593a27f
+/linux-native-browser-bridge:
+  en: fdca8a8b8db30536
+  zh: f51f5fa00133ec83
+/linux-native-browser-bridge/selection-and-ownership:
+  en: f4a82d7c41e18565
+  zh: 159a886c900daa3c
+/linux-native-browser-bridge/native-operations:
+  en: ad4704c5b6907f2b
+  zh: 7eb8f6df20cec1b3
+/linux-native-browser-bridge/full-state-and-events:
+  en: 6a35e3312040a04f
+  zh: c395a1c0f4817b31
+/linux-native-browser-bridge/cancellation-and-settlement:
+  en: 199b6002b8655662
+  zh: 531f6acf4aa344f4
+/linux-native-browser-bridge/bounds-and-shell-overlays:
+  en: bf4f25ea63b86502
+  zh: f2066dd71defde49
+/linux-native-browser-bridge/guest-security-requirements:
+  en: 1fa46435b204e266
+  zh: 617d035c7794e2d1
+/linux-native-browser-bridge/verified-rust-api-choices:
+  en: f4d95651a0d1b331
+  zh: 4b40e821788a31ff
+/linux-native-browser-bridge/validation-scope:
+  en: 7d91527934c0bcee
+  zh: 6821a1de4b20d56a

@@ -631,7 +631,6 @@ async function classifyRisk(
       role: 'user',
       content: [{ type: 'text', text: reviewUserText(snapshot) }],
     }],
-    temperature: 0,
     signal,
   })
   return readDecision(ctx.llm.stream(options))

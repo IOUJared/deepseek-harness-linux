@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-在独立的右侧 Sidebar tab 中浏览 HTTP(S) 页面，包括 loopback 服务。Web 使用 iframe 和应用维护的 history；Desktop 使用 Electron `<webview>`、原生导航 history 和保活页面。本包不会向被访问内容注入 Electron 或 Node 能力。
+在独立的右侧 Sidebar tab 中浏览 HTTP(S) 页面，包括 loopback 服务。Web 使用 iframe 和应用维护的 history；Desktop 使用 Electron `<webview>`、原生导航 history 和保活页面。可选的 [Linux 原生 Browser bridge](docs/native-browser/README.zh.md) 通过相同 controller 和工具栏提供真实隔离的原生 guest，独立于完整 Desktop bridge。本包不会向被访问内容注入 Electron、Node 或原生 bridge 能力。
 
 ## 目录
 

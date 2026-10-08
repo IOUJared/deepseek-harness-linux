@@ -259,6 +259,40 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('native review request', () => {
+  it('executes a write when the reviewer provider rejects explicit temperature', async () => {
+    const { ctx, adapter } = await harness([async function* (options) {
+      if (options.temperature !== undefined) {
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: { code: 'PI_AI_ERROR', message: '{"detail":"Unsupported parameter: temperature"}' },
+          },
+        }
+        return
+      }
+      yield* decisionChunks('{"risk":"low","decision":"allow"}')
+    }])
+    const write = registerProbe(ctx, 'write')
+    const { session, agent } = autoSession(ctx, 'provider-default-temperature')
+    appendHeader(session, [{ name: 'write', description: 'write', parameters: { type: 'object' } }])
+    const callId = ToolCallId('write-default-temperature')
+    appendAssistant(session, [{ type: 'tool-call', id: callId, name: 'write', arguments: '{}' }])
+    appendNativeCall(session, callId, 'write', '{}')
+
+    const result = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId,
+      name: 'write',
+      arguments: {},
+      agent,
+    })
+
+    expect(result).toMatchObject({ isError: false })
+    expect(write.runs()).toBe(1)
+    expect(adapter.requests).toHaveLength(1)
+  })
+
   it('uses the latest route and exactly the filtered logged five-section input', async () => {
     const { ctx, adapter } = await harness([
       reasoningDecisionChunks('{"risk":"low","decision":"allow"}'),
@@ -384,7 +418,6 @@ describe('native review request', () => {
       provider: 'review',
       model: 'same-model',
       system: EXPECTED_REVIEW_POLICY,
-      temperature: 0,
     })
     expect(request).not.toHaveProperty('sessionId')
     expect(request.maxTokens).toBeUndefined()

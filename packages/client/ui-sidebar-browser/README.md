@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Browse HTTP(S) pages, including loopback services, inside independent right-Sidebar tabs. Web uses an iframe with application-managed history; Desktop uses Electron `<webview>` with native navigation history and retained pages. The package never injects Electron or Node access into visited content.
+Browse HTTP(S) pages, including loopback services, inside independent right-Sidebar tabs. Web uses an iframe with application-managed history; Desktop uses Electron `<webview>` with native navigation history and retained pages. An optional [Linux native Browser bridge](docs/native-browser/README.md) supplies a real isolated native guest through the same controller and chrome, independently of the full Desktop bridge. The package never injects Electron, Node or native bridge access into visited content.
 
 ## Table of Contents
 

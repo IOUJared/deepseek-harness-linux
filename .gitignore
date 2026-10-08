@@ -1,5 +1,12 @@
 CLAUDE.local.md
 .env
+.env.*
+*.p12
+*.pfx
+*.pem
+__pycache__/
+/smoke-home/
+/evidence/
 apps/desktop/.env.windows
 apps/desktop/.env.macos
 apps/desktop/*.p12

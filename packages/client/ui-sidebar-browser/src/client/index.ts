@@ -12,7 +12,8 @@ import { createBrowserControllers } from './browser/BrowserController.ts'
 import type { BrowserInjected } from './browser/BrowserController.ts'
 import { createIframePage } from './pages.ts'
 import { createElectronPage } from './electron/pages.ts'
-import type { DesktopBrowserBridge } from '../types.ts'
+import type { DesktopBrowserBridge, LinuxBrowserBridge } from '../types.ts'
+import { createTauriPage } from './tauri/pages.ts'
 import { browserWorkspace } from './electron/workspace.ts'
 import type { BrowserPageFactory } from './browser/BrowserPage.ts'
 import { BROWSER_ID, browserDefinition } from './definition.tsx'
@@ -70,8 +71,10 @@ export function apply(ctx: Context): void {
     dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
   }).dshDesktop
   const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
+  const linux = (globalThis as typeof globalThis & { dshLinuxBrowser?: LinuxBrowserBridge }).dshLinuxBrowser
+  if (linux !== undefined && linux.protocolVersion !== 1) throw new Error('Unsupported Linux Browser protocol')
   ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-browser.copy')
-  ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
+  ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined || linux !== undefined }), 'ui-sidebar-browser.type')
   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
     const controllers = new Map<BrowserBodyProps['sessionId'], BrowserInjected>()
     scope.effect(() => async () => {
@@ -94,11 +97,15 @@ export function apply(ctx: Context): void {
       },
     }, BrowserBody)), 'ui-sidebar-browser.body')
   }
-  if (desktop === undefined) installFrames(ctx, () => createIframePage)
-  else ctx.inject(['workspaces'], (scope) => {
+  if (linux !== undefined) ctx.inject(['workspaces'], (scope) => {
+    installFrames(scope, sessionId => options => createTauriPage(options, linux,
+      signal => browserWorkspace(scope.workspaces.list, sessionId, signal), window.location.origin))
+  })
+  else if (desktop !== undefined) ctx.inject(['workspaces'], (scope) => {
     installFrames(scope, sessionId => options => createElectronPage(options, desktop,
       signal => browserWorkspace(scope.workspaces.list, sessionId, signal)))
   })
+  else installFrames(ctx, () => createIframePage)
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab.title', key: BROWSER_ID, store,
   }, BrowserTitle)), 'ui-sidebar-browser.title')
