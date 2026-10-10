@@ -56,7 +56,9 @@ At capacity, creation or cold resume rejects with `ACTIVATION_LIMIT_REACHED` (br
 
 ### One-shot and continuable children
 
-One-shot children run once and settle with a single result, plus an optional structured output and a safe diagnostic on failure. A start request may override the child Agent's provider, model, reasoning effort, and output-token limit through `agentOptions`; every requested option requires the provider's matching capability. Continuable children keep a durable session and accept later messages in order: the caller receives a stable child id, sends adjacent-Agent messages, and can interrupt the current turn without destroying the child. The tool row's `backgroundMode` picks the shape (`one-shot` by default, or `continuable` on providers that support it).
+One-shot children run once and settle with a single result, plus an optional structured output and a safe diagnostic on failure. A start request may override the child Agent's provider, model, reasoning effort, service tier, text verbosity, and output-token limit through `agentOptions`; every requested option requires the provider's matching capability. Continuable children keep a durable session and accept later messages in order: the caller receives a stable child id, sends adjacent-Agent messages, and can interrupt the current turn without destroying the child. The tool row's `backgroundMode` picks the shape (`one-shot` by default, or `continuable` on providers that support it).
+
+Service tier and text verbosity inherit only when the exact child provider/model matches the parent’s latest logged request; an explicit child value overrides inheritance. Changing the route drops inherited controls. Continuable descriptors preserve explicit values for cold resume; older descriptors keep them absent.
 
 ### Messaging, interrupting, and discovering
 
@@ -117,7 +119,7 @@ Successful local child creation appends a `subagent/catalog` fact to the parent 
 - **Publication is the boundary** — before it the provider owns the setup and must roll back on failure; after it the caller owns the run and must dispose it.
 - **Registration is effect-scoped** — removing a provider blocks new starts but never revokes accepted runs.
 - **Agent-message authority is exact adjacency** — `sendMessage()` requires the exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent.
-- **The descriptor is log-only** — a session event absent from model history and retained across compaction; a continuable descriptor records the resolved child provider, model, and reasoning effort explicitly for cold resume.
+- **The descriptor is log-only** — a session event absent from model history and retained across compaction; a continuable descriptor records the resolved child provider, model, reasoning effort, and explicit service-tier/text-verbosity controls for cold resume.
 - **This runtime answers archive admission for children** ([seam](../../workspace/workspace/README.md)) — `workspace/session-activity` reports the live subagent descendants inside a turn as the `subagent` family, found by the durable lineage this package records (`parentSession` with the subagent origin, any depth, never a fork) and labelled from each child's descriptor through a live Session observation when the Session query service is composed, otherwise by id; `workspace/session-stop` cancels each of them with the parent cause, one at a time, so one child refusing its cancel is logged while its siblings still stop. The parent's own turn, its jobs, and the archived-lineage step gate belong to the API Session Controller.
 
 </details>

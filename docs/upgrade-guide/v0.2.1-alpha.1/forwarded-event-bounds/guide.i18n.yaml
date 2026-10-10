@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-alpha.1/forwarded-event-bounds/guide.md
+/:
+  en: 79855bb09eea9f54
+  zh: 0dbb05c8305209c5
+/bounded-forwarded-host-events:
+  en: b336e174d3302dff
+  zh: 299a1a48f4420ea8
+/bounded-forwarded-host-events/change:
+  en: 5f40a35a68fa2e55
+  zh: e0e7a75425b36dee
+/bounded-forwarded-host-events/migration:
+  en: c387e4584447a99a
+  zh: 4c78c5124b730897

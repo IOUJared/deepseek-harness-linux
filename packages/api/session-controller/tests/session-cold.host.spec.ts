@@ -709,7 +709,8 @@ describe('subagent ownership fence', () => {
     })
     await expect(remote.prompt(zonedRequest)).resolves.toMatchObject({ ok: true })
     expect(followup).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      source: { kind: 'user', rpcId: zonedRequest.requestId, clientTimeZone: canonical },
+      source: { kind: 'user', rpcId: zonedRequest.requestId, clientTimeZone: canonical,
+        promptFingerprint: expect.stringMatching(/^v1:sha256:[a-f0-9]{64}$/) },
     }))
 
     const utcRequest = promptRequest({
@@ -720,7 +721,8 @@ describe('subagent ownership fence', () => {
     })
     await expect(remote.prompt(utcRequest)).resolves.toMatchObject({ ok: true })
     expect(followup).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      source: { kind: 'user', rpcId: utcRequest.requestId, clientTimeZone: 'UTC' },
+      source: { kind: 'user', rpcId: utcRequest.requestId, clientTimeZone: 'UTC',
+        promptFingerprint: expect.stringMatching(/^v1:sha256:[a-f0-9]{64}$/) },
     }))
 
     const unzonedRequest = promptRequest({
@@ -730,7 +732,8 @@ describe('subagent ownership fence', () => {
     })
     await expect(remote.prompt(unzonedRequest)).resolves.toMatchObject({ ok: true })
     expect(followup).toHaveBeenNthCalledWith(3, expect.objectContaining({
-      source: { kind: 'user', rpcId: unzonedRequest.requestId },
+      source: { kind: 'user', rpcId: unzonedRequest.requestId,
+        promptFingerprint: expect.stringMatching(/^v1:sha256:[a-f0-9]{64}$/) },
     }))
 
     for (const clientTimeZone of ['', ' UTC', 'CST', 'Not/A_Real_Zone']) {
@@ -897,7 +900,7 @@ describe('sessions.prompt synchronous rejection', () => {
     await ctx.fiber.dispose()
   })
 
-  it('maps a synchronous send throw (disposed/invalid input) to agent-busy with the reason attached', async () => {
+  it('redacts a synchronous send failure and retains an unknown admission outcome', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(AgentRegistry)
@@ -916,15 +919,15 @@ describe('sessions.prompt synchronous rejection', () => {
     const remote = createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
     for (const mode of ['queue', 'steer'] as const) {
-      const response = await remote.prompt(promptRequest({
-        sessionId: session.id, mode, content: [{ type: 'text' as const, text: 'x' }],
-      }))
+      const raw = promptRequest({ sessionId: session.id, mode, content: [{ type: 'text' as const, text: 'x' }] })
+      const response = await remote.prompt(raw)
+      await expect(remote.promptAdmission(raw)).resolves.toEqual({ ok: true, value: { state: 'unknown' } })
       expect(response.ok).toBe(false)
       if (!response.ok) {
         expect(response.error.code).toBe('session/agent-busy')
         expect(response.error.message).toBe('prompt rejected')
         expect(response.error.details).toEqual({
-          reason: 'Error: agent "session-throwing" lifecycle disposed',
+          reason: 'PROMPT_ADMISSION_FAILED',
         })
       }
     }

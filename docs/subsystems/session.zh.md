@@ -770,6 +770,41 @@ interface TurnEndReasonMap {
 
 可选的 `application` 指定文件关联应用，不修改系统默认值；`workspacePathApplications({ path })` 在校验 Host 路径后返回当前关联应用、名称、图标和默认项。
 
+<a id="prompt-admission"></a>
+
+## 提示提交
+
+[Session 控制器](../../packages/api/session-controller/README.zh.md) 在异步接收前保留请求标识。完全相同的重复请求共享原始结果；内容变化或无法验证的旧请求标识复用产生冲突。`promptAdmission` 读取该标识，不恢复 Agent，也不重放写入。接受状态表示收件箱或日志证据，不表示执行、完成或 fsync 持久化屏障；未知状态绝不允许重发。拒绝状态要求失败发生在收件箱派发前，且没有明确的已接受证据。可选的 `user-rpc.promptFingerprint` 在模型输入之外记录带版本的原始请求摘要；[兼容性说明](../persistence-changes/2026-10-07-prompt-admission-fingerprint.zh.md) 保留已有记录。
+
+来源：[`types.ts`](../../packages/api/session-controller/src/types.ts)
+
+```ts type-equiv
+/** Non-activating lookup of the original prompt admission identity. */
+interface SessionPromptAdmissionRequest {
+  readonly sessionId: SessionId
+  readonly requestId: SessionRequestId
+}
+```
+
+```ts type-equiv
+/** Positive admission evidence is not completion; unknown is never permission to resend. */
+type SessionPromptAdmissionValue =
+  | { readonly state: 'admitting' }
+  | {
+    readonly state: 'accepted'
+    readonly evidence: 'memory' | 'inbox' | 'journal'
+    readonly phase: 'queued' | 'claimed' | 'admitted' | 'recorded'
+    readonly messageId?: MessageId
+    readonly seq?: number
+  }
+  | {
+    readonly state: 'rejected'
+    readonly code: 'gateway/bad-request' | 'session/invalid-time-zone' | 'session/attachment-invalid'
+      | 'session/not-found' | 'session/agent-busy' | 'session/prompt-closed' | 'gateway/internal'
+  }
+  | { readonly state: 'unknown' }
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -897,6 +932,14 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('prompt') prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>
 
 /**
+ * Read original prompt admission evidence without activating its Agent or retrying a write.
+ * @param request - original Session and client request identities.
+ * @param signal - cancellation for a cold journal observation.
+ * @returns positive evidence, a retained definite rejection, or unknown; absence never permits resend.
+ */
+@Remote('promptAdmission') promptAdmission(request: SessionPromptAdmissionRequest, signal: AbortSignal): Promise<SessionPromptAdmissionValue>
+
+/**
  * Read one image proven reachable from the addressed Session log.
  * @param request - Session and attachment identities used for authorization.
  * @returns the durable attachment reference and base64-encoded bytes.
@@ -950,7 +993,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
+Types: [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionPromptAdmissionRequest](session.zh.md#prompt-admission) · [SessionPromptAdmissionValue](session.zh.md#prompt-admission) · [SessionSearchRequest](session-query.zh.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

@@ -413,9 +413,12 @@ describe('Typert Remote streams', () => {
   })
 
   it('validates the WebSocket heartbeat timer range and the stream inbox bound', () => {
-    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 2_000, streamInboxBytes: 262_144 })
+    const eventDefaults = {
+      remoteEventBufferItems: 128, remoteEventBufferBytes: 262_144, remoteEventPendingItems: 128, remoteEventPendingBytes: 262_144,
+    }
+    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 2_000, streamInboxBytes: 262_144, ...eventDefaults })
     expect(TypertGatewayService.Config({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS, streamInboxBytes: 1 }))
-      .toEqual({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS, streamInboxBytes: 1 })
+      .toEqual({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS, streamInboxBytes: 1, ...eventDefaults })
     for (const websocketHeartbeatIntervalMs of [0, 1.5, MAX_TIMER_DELAY_MS + 1]) {
       expect(() => TypertGatewayService.Config({ websocketHeartbeatIntervalMs })).toThrow()
     }
@@ -1466,6 +1469,162 @@ describe('Typert Remote streams', () => {
     })
 
     client.socket.close()
+    await unregister()
+  })
+
+  it('aborts a partially constructed source and leaves its registration slot reusable', async () => {
+    const { ctx } = await setup(false)
+    const pending = pendingInvocation(ctx.extend())
+    const outcome = pending.outcome.catch((reason: unknown) => reason)
+    const cleanup = vi.fn()
+    const error = new Error('source startup failed')
+    expect(() => ctx.typertGateway.registerRemoteEvents((_signal, buffer) => {
+      buffer.iterate(cleanup)
+      buffer.push(pending.dispatch)
+      throw error
+    }, REMOTE_HOST)).toThrow(error)
+    await expect(outcome).resolves.toBe(error)
+    expect(pending.reject).toHaveBeenCalledExactlyOnceWith(error)
+    expect(cleanup).toHaveBeenCalledOnce()
+    const healthy = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(healthy.source, REMOTE_HOST)
+    const lifetime = new AbortController()
+    const stream = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, lifetime.signal))[Symbol.asyncIterator]()
+    await expect(stream.next()).resolves.toMatchObject({ value: { type: 'ready' } })
+    lifetime.abort()
+    await unregister()
+  })
+
+  it('isolates a slow generation overflow while another Client settles the same question', async () => {
+    const { ctx } = await setup(true, { remoteEventBufferItems: 1 })
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const slow = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, new AbortController().signal))[Symbol.asyncIterator]()
+    const ready = await slow.next()
+    const slowId = (ready.value as { clientId: RemoteEventClientId }).clientId
+    const healthy = await openEventClient(ctx, 'healthy-overflow')
+    source.push({ event: 'fixture/fill', args: [1] })
+    await vi.waitFor(() => { expect(healthy.frames.some(frame => frame.type === 'item' && (frame.value as { event?: string }).event === 'fixture/fill')).toBe(true) })
+    const pending = pendingInvocation(ctx.extend())
+    const outcome = pending.outcome.catch((reason: unknown) => reason)
+    source.push(pending.dispatch)
+    await vi.waitFor(() => { expect(deliveredInvocation(healthy)).toBeDefined() })
+    await expect(slow.next()).rejects.toMatchObject({ code: 'gateway/event-overflow', details: { field: 'client' } })
+    const frame = deliveredInvocation(healthy)!
+    await expect(sendEventResult({ ...healthy, clientId: slowId }, frame, { kind: 'result', value: 'stale' })).rejects.toThrow('no active event stream')
+    expect(pending.reject).not.toHaveBeenCalled()
+    await sendEventResult(healthy, frame, { kind: 'result', value: 'healthy' })
+    await expect(outcome).resolves.toEqual({ kind: 'result', value: 'healthy' })
+    healthy.socket.close()
+    await unregister()
+  })
+
+  it('rejects the last overflowed delivery and admits a fresh generation without replaying it', async () => {
+    const { ctx } = await setup(false, { remoteEventBufferItems: 1 })
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const slow = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, new AbortController().signal))[Symbol.asyncIterator]()
+    await slow.next()
+    const pending = pendingInvocation(ctx.extend())
+    const rejected = pending.outcome.catch((reason: unknown) => reason)
+    source.push(pending.dispatch)
+    await vi.waitFor(() => { expect(randomUuid).toHaveBeenCalledTimes(2) })
+    source.push({ event: 'fixture/overflow', args: [1] })
+    await expect(rejected).resolves.toMatchObject({ code: 'gateway/event-overflow', details: { field: 'client' } })
+    expect(pending.resolve).not.toHaveBeenCalled()
+    expect(ctx.typertGateway.hasLiveClient()).toBe(false)
+    await expect(slow.next()).rejects.toMatchObject({ code: 'gateway/event-overflow' })
+    const lifetime = new AbortController()
+    const fresh = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, lifetime.signal))[Symbol.asyncIterator]()
+    await expect(fresh.next()).resolves.toMatchObject({ value: { type: 'ready' } })
+    source.push({ event: 'fixture/recovered', args: [] })
+    await expect(fresh.next()).resolves.toMatchObject({ value: { type: 'emit', event: 'fixture/recovered' } })
+    lifetime.abort()
+    await unregister()
+  })
+
+  it('counts complete multibyte Client snapshots exactly and releases paused buffers on abort', async () => {
+    const frame = { type: 'emit', event: 'fixture/雪', args: ['🌹'.repeat(100)] }
+    const bytes = Buffer.byteLength(JSON.stringify(frame))
+    for (const delta of [0, -1]) {
+      const { ctx } = await setup(false, { remoteEventBufferBytes: bytes + delta })
+      const source = new RemoteEventSourceProbe()
+      const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+      const lifetime = new AbortController()
+      const client = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, lifetime.signal))[Symbol.asyncIterator]()
+      await client.next()
+      source.push({ event: frame.event, args: frame.args })
+      if (delta === 0) {
+        await expect(client.next()).resolves.toMatchObject({ value: frame })
+        source.push({ event: 'fixture/retained', args: [] })
+        lifetime.abort()
+        expect(ctx.typertGateway.hasLiveClient()).toBe(false)
+        await expect(client.next()).resolves.toMatchObject({ done: true })
+      } else await expect(client.next()).rejects.toMatchObject({ code: 'gateway/event-overflow' })
+      await unregister()
+    }
+  })
+
+  it('detaches a queued Client payload before producer mutation', async () => {
+    const { ctx } = await setup(true)
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const slow = (await ctx.typertGateway.wireStream.open('$events', { args: {} }, toAsync([]), undefined, new AbortController().signal))[Symbol.asyncIterator]()
+    await slow.next()
+    const healthy = await openEventClient(ctx, 'snapshot-witness')
+    const args = [{ text: 'original' }]
+    source.push({ event: 'fixture/mutable', args })
+    await vi.waitFor(() => { expect(healthy.frames.some(frame => frame.type === 'item' && (frame.value as { event?: string }).event === 'fixture/mutable')).toBe(true) })
+    args[0]!.text = 'x'.repeat(1000000)
+    await expect(slow.next()).resolves.toMatchObject({ value: { args: [{ text: 'original' }] } })
+    healthy.socket.close()
+    await unregister()
+  })
+
+  it('bounds pending questions without Clients and reuses exact count and byte reservations after cancellation', async () => {
+    const ids = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003'] as const
+    const bytes = Buffer.byteLength(JSON.stringify({ type: 'waterfall', event: 'fixture/approval', eventId: ids[0], agentId: 'agent-1', request: { prompt: '🌹' } }))
+    const original = await vi.importActual<typeof import('node:crypto')>('node:crypto')
+    for (const config of [{ remoteEventPendingItems: 1 }, { remoteEventPendingBytes: bytes }]) {
+      randomUuid.mockReset().mockReturnValueOnce(ids[0]).mockReturnValueOnce(ids[1])
+        .mockReturnValueOnce(ids[2]).mockImplementation(original.randomUUID)
+      const { ctx } = await setup(false, config)
+      const source = new RemoteEventSourceProbe()
+      const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+      const lifetime = new AbortController()
+      const first = pendingInvocation(ctx.extend(), lifetime.signal, '🌹')
+      const firstOutcome = first.outcome.catch((reason: unknown) => reason)
+      source.push(first.dispatch)
+      await vi.waitFor(() => { expect(randomUuid).toHaveBeenCalledTimes(1) })
+      const second = pendingInvocation(ctx.extend(), undefined, '🌹')
+      const secondOutcome = second.outcome.catch((reason: unknown) => reason)
+      source.push(second.dispatch)
+      await expect(secondOutcome).resolves.toMatchObject({ code: 'gateway/event-overflow', details: { field: 'pending' } })
+      expect(first.reject).not.toHaveBeenCalled()
+      lifetime.abort('release reservation')
+      await expect(firstOutcome).resolves.toMatchObject({ message: 'typert gateway: Remote event was cancelled', cause: 'release reservation' })
+      const third = pendingInvocation(ctx.extend(), undefined, '🌹')
+      const thirdOutcome = third.outcome.catch((reason: unknown) => reason)
+      source.push(third.dispatch)
+      await vi.waitFor(() => { expect(randomUuid).toHaveBeenCalledTimes(3) })
+      expect(third.reject).not.toHaveBeenCalled()
+      await unregister()
+      await expect(thirdOutcome).resolves.toBeInstanceOf(Error)
+    }
+  })
+
+  it('rejects an oversized pending question by serialized metadata-inclusive bytes', async () => {
+    const id = '00000000-0000-4000-8000-000000000001' as const
+    const bytes = Buffer.byteLength(JSON.stringify({ type: 'waterfall', event: 'fixture/approval', eventId: id, agentId: 'agent-1', request: { prompt: '🌹' } }))
+    randomUuid.mockReturnValueOnce(id)
+    const { ctx } = await setup(false, { remoteEventPendingBytes: bytes - 1 })
+    const source = new RemoteEventSourceProbe()
+    const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
+    const pending = pendingInvocation(ctx.extend(), undefined, '🌹')
+    const rejected = pending.outcome.catch((reason: unknown) => reason)
+    source.push(pending.dispatch)
+    await expect(rejected).resolves.toMatchObject({ code: 'gateway/event-overflow', details: { field: 'pending' } })
+    expect(pending.resolve).not.toHaveBeenCalled()
     await unregister()
   })
 

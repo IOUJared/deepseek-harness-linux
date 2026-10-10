@@ -60,7 +60,7 @@ export function resolveChildDepth(parent: Agent, maxDepth: number | undefined): 
 
 /**
  * Resolve the parent values inherited by a child. The latest request header
- * owns provider, model, and reasoning effort after request-time selection;
+ * owns the route and route-scoped request controls after request-time selection;
  * creation options remain the fallback before the first request and retain
  * the configured output-token limit.
  * @param parent - delegating parent Agent.
@@ -73,6 +73,8 @@ export function parentAgentOptionsForDelegation(parent: Agent): AgentOptions {
     provider: _createdProvider,
     model: _createdModel,
     reasoningEffort: _createdReasoningEffort,
+    serviceTier: _createdServiceTier,
+    textVerbosity: _createdTextVerbosity,
     ...createdOptions
   } = parent.options
   return {
@@ -82,15 +84,17 @@ export function parentAgentOptionsForDelegation(parent: Agent): AgentOptions {
     ...requestConfig.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: requestConfig.reasoningEffort },
+    ...requestConfig.serviceTier === undefined ? {} : { serviceTier: requestConfig.serviceTier },
+    ...requestConfig.textVerbosity === undefined ? {} : { textVerbosity: requestConfig.textVerbosity },
   }
 }
 
 /**
  * Resolve the child's `AgentOptions`: the parent's provider/model,
- * reasoning-effort, and maxTokens values unless the request overrides them,
+ * reasoning-effort, service-tier, text-verbosity, and maxTokens values unless overridden,
  * stamped with the child's own delegation depth. Changing the route without
- * naming an effort clears the parent's route-owned effort so the selected
- * model resolves its own default.
+ * naming a control clears that inherited route-owned value so the selected
+ * model retains its own behavior.
  * @param parent - the delegating parent whose route the child inherits.
  * @param requested - per-child overrides, if any.
  * @param childDepth - the resolved delegation depth to stamp.
@@ -110,12 +114,16 @@ export function resolveChildAgentOptions(
     ...parentProvider !== undefined ? { provider: parentProvider } : {},
     ...parentModel !== undefined ? { model: parentModel } : {},
     ...parentReasoningEffort !== undefined ? { reasoningEffort: parentReasoningEffort } : {},
+    ...parentOptions.serviceTier === undefined ? {} : { serviceTier: parentOptions.serviceTier },
+    ...parentOptions.textVerbosity === undefined ? {} : { textVerbosity: parentOptions.textVerbosity },
     ...parentMaxTokens !== undefined ? { maxTokens: parentMaxTokens } : {},
     ...requested,
     subagentDepth: childDepth,
   }
   const routeChanged = resolved.provider !== parentProvider || resolved.model !== parentModel
   if (routeChanged && requested?.reasoningEffort === undefined) delete resolved.reasoningEffort
+  if (routeChanged && requested?.serviceTier === undefined) delete resolved.serviceTier
+  if (routeChanged && requested?.textVerbosity === undefined) delete resolved.textVerbosity
   return resolved
 }
 

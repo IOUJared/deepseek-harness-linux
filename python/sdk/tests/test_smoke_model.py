@@ -613,7 +613,7 @@ def test_native_writer_comparison_rejects_mixed_expected_role_generations(tmp_pa
         SMOKE["compare_snapshot_files"](fresh, False, tmp_path, tuple(golden), native_writer_output=True)
 
 
-@pytest.mark.parametrize("scenario", ["ADVANCED", "RESTART"])
+@pytest.mark.parametrize("scenario", ["ADVANCED", "RESTART", "REQUEST_CONTROLS"])
 def test_committed_python_native_goldens_compare_current_output_without_rewriting(scenario: str) -> None:
     directory = SMOKE[f"{scenario}_SNAPSHOT_DIRECTORY"]
     filenames = SMOKE[f"{scenario}_SNAPSHOT_FILENAMES"]

@@ -1,0 +1,11 @@
+# Current prompt admission; readable request-header sidecars retain their original owner.
+version: 1
+scenario: fresh-round-trip-admission
+profile: web
+composition: web-default-admission
+recording: authored
+header:
+  class: web-default
+  pin: true
+  systemPromptSource: fresh-round-trip
+  toolSchemasSource: fresh-round-trip

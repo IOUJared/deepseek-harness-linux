@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-07-explicit-request-controls.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-07-explicit-request-controls.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-07-explicit-request-controls:
+  en: 5ecc655ba0e7dd02
+  zh: bb6a88187b796595
+/2026-10-07-explicit-request-controls/summary:
+  en: 664e1da9f0ace88d
+  zh: 5e075e529e0dcf69
+/2026-10-07-explicit-request-controls/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-07-explicit-request-controls/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-07-explicit-request-controls/compatibility:
+  en: 28c4f65cd2b476f9
+  zh: 8e397326e4795e10
+/2026-10-07-explicit-request-controls/verification:
+  en: a3426856178b86f9
+  zh: e072c845630b177f
+/2026-10-07-explicit-request-controls/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

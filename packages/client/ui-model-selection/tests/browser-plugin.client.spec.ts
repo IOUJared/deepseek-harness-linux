@@ -90,7 +90,7 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
         },
       })
     },
-    selectModel: (payload: { sessionId: SessionId; provider: string; model: string; reasoningEffort?: string }) => {
+    selectModel: (payload: { sessionId: SessionId; provider: string; model: string; reasoningEffort?: string; serviceTier?: ModelSelection['serviceTier']; textVerbosity?: ModelSelection['textVerbosity'] }) => {
       calls.select += 1
       if (selectionFailure !== undefined) return Promise.resolve({ ok: false as const, error: selectionFailure })
       selected = {
@@ -99,6 +99,8 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
         ...payload.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: payload.reasoningEffort },
+        ...payload.serviceTier === undefined ? {} : { serviceTier: payload.serviceTier },
+        ...payload.textVerbosity === undefined ? {} : { textVerbosity: payload.textVerbosity },
       }
       projections.get(payload.sessionId)?.set({ lastUsed: null, next: selected })
       return Promise.resolve({ ok: true as const, value: { selected } })
@@ -254,6 +256,25 @@ describe('ui-model-selection dual entry', () => {
       const options = await b.popup().options(projection('s1'), new AbortController().signal)
       expect([...new Set(options.map(option => option.group?.name))])
         .toEqual(['deepseek-account', 'deepseek-official', 'external', 'last-provider'])
+    } finally {
+      await b.ctx.fiber.dispose()
+    }
+  })
+
+  it('preserves current request controls through same-route effort changes and drops them on route switches', async () => {
+    const b = await bench()
+    try {
+      b.mint('s1')
+      const face = b.seat().inject!(sid('s1'))
+      const selected: ModelSelection = {
+        provider: 'deepseek-official', model: 'deepseek-v4-flash', serviceTier: 'priority', textVerbosity: 'low',
+      }
+      b.setProjected(sid('s1'), { lastUsed: null, next: selected })
+      await face.select({ provider: selected.provider, model: selected.model, reasoningEffort: 'max' })
+      expect(b.hostCurrent()).toEqual({ ...selected, reasoningEffort: 'max' })
+      expect(b.track).not.toHaveBeenCalledWith('model_switch', expect.anything())
+      await face.select({ provider: selected.provider, model: 'deepseek-v4-pro' })
+      expect(b.hostCurrent()).toEqual({ provider: selected.provider, model: 'deepseek-v4-pro' })
     } finally {
       await b.ctx.fiber.dispose()
     }

@@ -19,7 +19,7 @@ import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import { resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
+import { LlmError, resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
 import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import {
@@ -226,10 +226,14 @@ export interface Config {
    * and registers them the moment a settings section supplies profiles.
    */
   providers: Volatile<Record<string, PiAiProviderProfile>>
+  /** Explicit managed-account activation; changing it remounts the plugin. */
+  nativeCodexAccounts: boolean
+  /** Required absolute, canonical private vault directory when managed accounts are enabled. */
+  nativeCodexAccountVault?: string
 }
 
 /** Plain options accepted by the provider resolver. */
-export type Options = { [K in keyof Config]?: Config[K] extends Volatile<infer T> ? T : never }
+export type Options = { [K in keyof Config]?: Config[K] extends Volatile<infer T> ? T : Config[K] }
 
 const thinkingBudgets = z.object({
   minimal: z.number(),
@@ -348,9 +352,36 @@ const profile = z.object({
   retryPolicy: RetryPolicySchema,
 })
 
+/**
+ * Refuse managed bearer dispatch outside the catalog-owned official Codex route.
+ * @param profile - already resolved route, before any private grant access.
+ */
+export function assertManagedCodexProfile(profile: ResolvedPiAiProviderProfile): void {
+  if (profile.provider !== 'openai-codex') return
+  if (profile.apiKeyEnv !== undefined) {
+    throw new LlmError('Managed Codex accounts cannot use an apiKeyEnv override', 'ACCOUNT_AUTH_OVERRIDE')
+  }
+  const official = (raw: string): boolean => {
+    try {
+      const url = new URL(raw)
+      return url.origin === 'https://chatgpt.com' && url.username === '' && url.password === ''
+        && url.search === '' && url.hash === ''
+        && ['/backend-api', '/backend-api/codex', '/backend-api/codex/responses'].includes(url.pathname.replace(/\/+$/, ''))
+    } catch (_invalidUrl) {
+      return false
+    }
+  }
+  if (profile.api !== undefined || (profile.baseURL !== undefined && !official(profile.baseURL))
+    || profile.piProvider?.getModels().some(model => model.api !== 'openai-codex-responses' || !official(model.baseUrl))) {
+    throw new LlmError('Managed Codex accounts require the official Codex protocol and endpoint', 'ACCOUNT_ROUTE_OVERRIDE')
+  }
+}
+
 /** Runtime schema for {@link Config}. */
 export const Config = z.object({
   providers: z.dict(profile).default({}).volatile(),
+  nativeCodexAccounts: z.boolean().default(false),
+  nativeCodexAccountVault: z.string(),
 })
 
 /**

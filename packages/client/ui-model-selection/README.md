@@ -29,6 +29,8 @@ The Web GUI lets users switch the model and reasoning effort for an existing ses
 
 DeepSeek account and API-key routes appear as separate provider groups, each exposing the same configured model catalog.
 
+Same-route effort changes retain saved service-tier/text-verbosity controls; choosing a different provider/model drops them. This Web picker does not expose new control rows.
+
 The unselected model label uses the same regular weight as an available model name and retains the saved reasoning effort caption for existing and new sessions; effort editing requires an available model. Clicking the unselected trigger opens the model list directly; Escape closes it.
 
 Mount this plugin alongside `ui-conversation` and the commands package; the composer then shows the model seat next to the pending indicator, and `/model` opens the same directory as a popup. While the seat's menu is open, `↑`/`↓` move focus through root and effort rows, or move the model-list highlight without leaving search. Enter and Tab settle the highlighted model or focused row; Escape and `Shift+Tab` leave a drilled pane first and otherwise close back to the trigger. Drilling focuses model search when shown, otherwise the current model or effort row, and going back lands on the cell that opened the pane left. The composer shows the catalog name while the selected model is available, and its saved `provider/model` ID when the model or provider is removed, including account sign-out. The stored provider, model, and reasoning effort remain unchanged.

@@ -74,3 +74,27 @@ export type ReasoningEffortId = Branded<'ReasoningEffortId'>
 export function ReasoningEffortId(id: string): ReasoningEffortId {
   return brandString<ReasoningEffortId>(id)
 }
+
+/** Service tier accepted only by exact models advertising the value. */
+export type ServiceTier = ('default' | 'priority') & Branded<'ServiceTier'>
+
+/**
+ * Brand an admitted service tier without changing its protocol value.
+ * @param value - finite service tier validated by the caller's parser.
+ * @returns the branded service tier.
+ */
+export function ServiceTier(value: 'default' | 'priority'): ServiceTier {
+  return brandString<ServiceTier>(value)
+}
+
+/** Output detail accepted only by exact models advertising the value. */
+export type TextVerbosity = ('low' | 'medium' | 'high') & Branded<'TextVerbosity'>
+
+/**
+ * Brand an admitted text verbosity without changing its protocol value.
+ * @param value - finite verbosity validated by the caller's parser.
+ * @returns the branded text verbosity.
+ */
+export function TextVerbosity(value: 'low' | 'medium' | 'high'): TextVerbosity {
+  return brandString<TextVerbosity>(value)
+}

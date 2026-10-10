@@ -8,7 +8,7 @@ import type {
 } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
@@ -67,7 +67,7 @@ export type ApiSessionAgentResult =
 
 type InstalledSelection = ModelSelectionRef & {
   current: AgentModelSelection
-  consume(provider: string, model: string, reasoningEffort: string | undefined): boolean
+  consume(provider: string, model: string, reasoningEffort: string | undefined, serviceTier?: ServiceTier, textVerbosity?: TextVerbosity): boolean
 }
 
 /**
@@ -306,15 +306,19 @@ export class ApiSessionAgentController {
             || loggedHeader.adapterDefaults?.reasoningEffort === true
             ? {}
             : { reasoningEffort: logged.reasoningEffort }),
+          ...(logged.serviceTier === undefined ? {} : { serviceTier: logged.serviceTier }),
+          ...(logged.textVerbosity === undefined ? {} : { textVerbosity: logged.textVerbosity }),
         }
       },
       set current(next: AgentModelSelection) {
         picked = next
       },
-      consume(provider: string, model: string, reasoningEffort: string | undefined): boolean {
+      consume(provider: string, model: string, reasoningEffort: string | undefined, serviceTier?: ServiceTier, textVerbosity?: TextVerbosity): boolean {
         if (picked?.provider !== provider
           || picked.model !== model
-          || picked.reasoningEffort !== reasoningEffort) return false
+          || picked.reasoningEffort !== reasoningEffort
+          || picked.serviceTier !== serviceTier
+          || picked.textVerbosity !== textVerbosity) return false
         picked = undefined
         return true
       },
@@ -341,6 +345,8 @@ export class ApiSessionAgentController {
    * @param provider - provider route used by the request.
    * @param model - provider-owned model used by the request.
    * @param reasoningEffort - adapter-owned effort used by the request.
+   * @param serviceTier - explicit service tier used by the request.
+   * @param textVerbosity - explicit output detail used by the request.
    * @returns whether the pending selection was consumed.
    */
   consumeSelection(
@@ -348,8 +354,10 @@ export class ApiSessionAgentController {
     provider: string,
     model: string,
     reasoningEffort: string | undefined,
+    serviceTier?: ServiceTier,
+    textVerbosity?: TextVerbosity,
   ): boolean {
-    return this.selections.get(agent)?.consume(provider, model, reasoningEffort) ?? false
+    return this.selections.get(agent)?.consume(provider, model, reasoningEffort, serviceTier, textVerbosity) ?? false
   }
 
   /**
@@ -532,5 +540,7 @@ function agentModelSelection(selection: ModelSelection): AgentModelSelection {
     ...(selection.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }),
+    ...(selection.serviceTier === undefined ? {} : { serviceTier: ServiceTier(selection.serviceTier) }),
+    ...(selection.textVerbosity === undefined ? {} : { textVerbosity: TextVerbosity(selection.textVerbosity) }),
   }
 }

@@ -101,6 +101,8 @@ export interface ModelSelection {
   readonly provider: string
   readonly model: string
   readonly reasoningEffort?: string
+  readonly serviceTier?: 'default' | 'priority'
+  readonly textVerbosity?: 'low' | 'medium' | 'high'
 }
 
 /** Host fold state for durable model selection. */
@@ -132,12 +134,26 @@ export interface ModelReasoning {
   readonly defaultEffort?: string
 }
 
+/** Selectable service tiers for one exact model; defaults are display hints only. */
+export interface ModelServiceTier {
+  readonly tiers: readonly { readonly id: 'default' | 'priority'; readonly name: string; readonly description?: string }[]
+  readonly defaultTier?: 'default' | 'priority'
+}
+
+/** Selectable output detail for one exact model; defaults are display hints only. */
+export interface ModelTextVerbosity {
+  readonly levels: readonly { readonly id: 'low' | 'medium' | 'high'; readonly name: string; readonly description?: string }[]
+  readonly defaultLevel?: 'low' | 'medium' | 'high'
+}
+
 /** One model displayed inside its provider group. */
 export interface ModelCatalogModel {
   readonly id: string
   readonly name: string
   readonly description?: string
   readonly reasoning?: ModelReasoning
+  readonly serviceTier?: ModelServiceTier
+  readonly textVerbosity?: ModelTextVerbosity
 }
 
 /** One provider and its successfully loaded model catalog. */
@@ -212,6 +228,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'session/projections-unavailable': Record<string, never>
     'session/writer-held': { readonly sessionId: SessionId }
     'session/agent-busy': { readonly reason: string }
+    'session/prompt-conflict': {
+      readonly sessionId: SessionId
+      readonly requestId: SessionRequestId
+      readonly reason: 'PAYLOAD_CHANGED' | 'PAYLOAD_UNVERIFIABLE'
+    }
+    'session/prompt-capacity': Record<string, never>
+    'session/prompt-closed': Record<string, never>
     'session/invalid-time-zone': { readonly value: string }
     'session/workspace-attach-failed': { readonly sessionId: SessionId; readonly workspaceId: string }
     'agent-preset/conflict': {
@@ -345,6 +368,29 @@ export interface SessionPromptValue {
   readonly accepted: true
 }
 
+/** Non-activating lookup of the original prompt admission identity. */
+export interface SessionPromptAdmissionRequest {
+  readonly sessionId: SessionId
+  readonly requestId: SessionRequestId
+}
+
+/** Positive admission evidence is not completion; unknown is never permission to resend. */
+export type SessionPromptAdmissionValue =
+  | { readonly state: 'admitting' }
+  | {
+    readonly state: 'accepted'
+    readonly evidence: 'memory' | 'inbox' | 'journal'
+    readonly phase: 'queued' | 'claimed' | 'admitted' | 'recorded'
+    readonly messageId?: MessageId
+    readonly seq?: number
+  }
+  | {
+    readonly state: 'rejected'
+    readonly code: 'gateway/bad-request' | 'session/invalid-time-zone' | 'session/attachment-invalid'
+      | 'session/not-found' | 'session/agent-busy' | 'session/prompt-closed' | 'gateway/internal'
+  }
+  | { readonly state: 'unknown' }
+
 /** Durable image read request. */
 export interface SessionAttachmentRequest {
   readonly sessionId: SessionId
@@ -400,7 +446,9 @@ export type SessionRequestId = Branded<'session-request-id'>
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     /** Browser prompt correlation and optional Host-validated time zone. */
-    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string }
+    'user-rpc': { kind: 'user'; rpcId: SessionRequestId; clientTimeZone?: string;
+      /** Versioned raw prompt-request digest; omitted in predecessors and never model input. */
+      promptFingerprint?: string }
   }
 }
 

@@ -4,12 +4,11 @@ import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {
-  TypertRemoteEventDispatch,
+  TypertRemoteEventBuffer,
   TypertRemoteEventInvocation,
   TypertRemoteEventOutcome,
   TypertRemoteEventSource,
 } from '@deepseek-ai/dsh-api-gateway'
-import { Deque } from '@deepseek-ai/dsh-deque'
 import { carrierKeyOf } from '@deepseek-ai/dsh-scope'
 import { isJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { API_REMOTE_FORWARDED_EVENTS } from './remote-events.ts'
@@ -46,8 +45,7 @@ export function apply(ctx: Context): void {
 
 /** Create the sole queue and listener set consumed by the registered Gateway. */
 function remoteEventSource(ctx: Context): TypertRemoteEventSource {
-  return (signal) => {
-    const queue = new RemoteEventQueue()
+  return (_signal, queue) => {
     const disposers = API_REMOTE_FORWARDED_EVENTS.map(({ event, mode }) => {
       if (mode === 'emit') {
         return ctx.on(event as never, ((...args: unknown[]) => {
@@ -74,66 +72,15 @@ function remoteEventSource(ctx: Context): TypertRemoteEventSource {
         )
       }) as never)
     })
-    return queue.iterate(signal, () => {
+    return queue.iterate(() => {
       for (const dispose of disposers) dispose()
     })
   }
 }
 
-/** One pull-driven queue bridging synchronous Cordis listeners to an AsyncIterable. */
-class RemoteEventQueue {
-  private readonly buffer = new Deque<TypertRemoteEventDispatch>()
-  private waiter: (() => void) | undefined
-  private done = false
-
-  push(frame: TypertRemoteEventDispatch): boolean {
-    if (this.done) return false
-    this.buffer.pushBack(frame)
-    this.waiter?.()
-    return true
-  }
-
-  private end(reason: unknown): void {
-    if (this.done) return
-    this.done = true
-    while (this.buffer.size > 0) {
-      const dispatch = this.buffer.popFront() as TypertRemoteEventDispatch
-      if ('context' in dispatch) dispatch.reject(reason)
-    }
-    this.waiter?.()
-  }
-
-  async *iterate(signal: AbortSignal, cleanup: () => void): AsyncGenerator<TypertRemoteEventDispatch> {
-    const abort = (): void => { this.end(remoteEventSourceEndReason(signal)) }
-    signal.addEventListener('abort', abort, { once: true })
-    try {
-      while (true) {
-        if (this.done || signal.aborted) return
-        while (this.buffer.size > 0) yield this.buffer.popFront() as TypertRemoteEventDispatch
-        await new Promise<void>((resolve) => { this.waiter = resolve })
-        this.waiter = undefined
-      }
-    } finally {
-      signal.removeEventListener('abort', abort)
-      this.end(remoteEventSourceEndReason(signal))
-      cleanup()
-    }
-  }
-}
-
-/**
- * Normalize an event-source shutdown for pending Host waterfalls.
- * @param signal - source lifetime whose reason wins after cancellation.
- * @returns the cancellation reason or an unexpected-end failure.
- */
-function remoteEventSourceEndReason(signal: AbortSignal): unknown {
-  if (signal.aborted) return signal.reason
-  return new Error('api-remotes: forwarded Remote event source ended')
-}
-
 /** Bridge one Cordis waterfall listener through the Gateway-owned pending event. */
 function forwardWaterfall(
-  queue: RemoteEventQueue,
+  queue: TypertRemoteEventBuffer,
   event: string,
   request: object,
   context: TypertRemoteEventInvocation['context'],

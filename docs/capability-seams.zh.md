@@ -105,6 +105,7 @@ flowchart LR
   pkg_credentials["credentials"]
   svc_credentials["ctx.credentials<br/>Credential seam"]
   pkg_credentials_local["credentials-local"]
+  svc_codexAccounts["ctx.codexAccounts<br/>Managed native Codex accounts"]
   pkg_deepseek_account["deepseek-account"]
   svc_deepseekAccount["ctx.deepseekAccount<br/>DeepSeek account"]
   pkg_deepseek_account_platform["deepseek-account-platform"]
@@ -347,6 +348,7 @@ flowchart LR
   pkg_jobs_local --> svc_jobs
   pkg_llm --> svc_llm
   pkg_llm_deepseek --> svc_llm
+  pkg_llm_pi_ai --> svc_codexAccounts
   pkg_llm_pi_ai --> svc_llm
   pkg_llm_replay --> svc_llm
   pkg_lsp --> svc_lsp
@@ -608,6 +610,7 @@ flowchart LR
 | `ctx.settings` | `core` | [`settings`](../packages/settings/settings) | - | [`api-settings-controller`](../packages/api/settings-controller) | - | Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references. |
 | `ctx.subagentModelSelection` | `core` | [`tool-subagent`](../packages/subagent/tool-subagent) | - | [`tool-subagent`](../packages/subagent/tool-subagent) | - | 拥有默认关闭的设置命名空间；Agent 作用域的委派工具会在组合新顶层 Session 时读取它。 |
 | `ctx.credentials` | `seam` | [`credentials`](../packages/credentials/credentials) | [`credentials-local`](../packages/credentials/credentials-local) | [`api-settings-controller`](../packages/api/settings-controller), [`llm-deepseek`](../packages/llm/llm-deepseek), [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | 配置携带对机密信息的引用；提供方拥有实际值。消费方按操作解析，因此轮换后的凭据会在紧接着的下一次请求中生效；settings controller 提供不含实际值的视图和只写存储。 |
+| `ctx.codexAccounts` | `seam` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | - | 提供方拥有私有授权存储与受 epoch 校验约束的账户生命周期；本仓库包依赖图之外的原生 Core 读取不含凭证的描述并发起显式变更。 |
 | `ctx.deepseekAccount` | `seam` | [`deepseek-account`](../packages/credentials/deepseek-account) | [`deepseek-account-platform`](../packages/credentials/deepseek-account-platform) | [`api-account-controller`](../packages/api/account-controller), [`llm-deepseek`](../packages/llm/llm-deepseek) | - | Host 负责浏览器授权和本地凭证；UI 使用方只接收不含 token 的状态。 |
 | `ctx.authorization` | `seam` | [`authorization`](../packages/credentials/authorization) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | flow 由知道如何取得某份凭据的插件注册，并以其写入的记录为键；seam 拥有这段对话与"每个键同时只跑一次尝试"的生命周期，而非协议本身。 |
 | `ctx.productAnalytics` | `service` | [`client-product-analytics`](../packages/client/product-analytics) | - | - | - | 根据 Host 动态采集策略接收指定桌面事件、补充可用登录身份并监听实时压缩。 |

@@ -33,5 +33,6 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'gateway/service-unavailable': TypertGatewayFaultDetails
     'gateway/signature-invalid': TypertGatewayFaultDetails
     'gateway/uplink-overflow': TypertGatewayFaultDetails
+    'gateway/event-overflow': TypertGatewayFaultDetails
   }
 }

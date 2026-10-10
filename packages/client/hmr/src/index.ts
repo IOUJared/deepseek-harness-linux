@@ -1,7 +1,7 @@
 /**
- * Host transport for Web client graph changes and rebuilt bundles. One interval
- * stat-polls every graph row's client bundle (polling by design: network mounts
- * deliver no inotify events), reports changes through
+ * Host transport for Web client graph changes and rebuilt bundles. While browser
+ * EventSource consumers are attached, one interval stat-polls graph bundles
+ * (network mounts deliver no inotify events), reports changes through
  * `clientModules.rebuilt(id)`, and serves the `/plugins/events` SSE channel
  * broadcasting graph/rebuilt frames to the browser half (src/client/).
  * The Web composition mounts this transport for live graph updates;
@@ -71,6 +71,15 @@ export function apply(ctx: Context, config: Config): void {
 
   // --- bundle watch: one HMR-owned stat poll ------------------------------
   const watched = new Map<string, WatchedBundle>()
+  const connections = new Set<ServerResponse>()
+  let timer: ReturnType<typeof setInterval> | undefined
+  let disposed = false
+
+  const stopPolling = (): void => {
+    if (timer !== undefined) clearInterval(timer)
+    timer = undefined
+    watched.clear()
+  }
 
   const publish = (id: string, watch: WatchedBundle, current: WatchedBundleStat): void => {
     try {
@@ -136,27 +145,23 @@ export function apply(ctx: Context, config: Config): void {
       watched.delete(id)
     }
     for (const [id, watch] of rows) {
+      if (disposed) return
       if (!watched.has(id)) watchRow(id, watch)
     }
   }
 
   ctx.effect(() => {
-    // Initial sync covers rows already in the graph; the subscription covers
-    // rows arriving later (boot-window activations, including this plugin's
-    // own row; bootstrap revisions also reach page diagnostics).
-    syncWatches()
-    const unsubscribe = ctx.clientModules.onGraphChanged(syncWatches)
-    const timer = setInterval(pollWatches, pollIntervalMs)
-    timer.unref()
+    const unsubscribe = ctx.clientModules.onGraphChanged(() => {
+      if (!disposed && connections.size > 0) syncWatches()
+    })
     return () => {
+      disposed = true
       unsubscribe()
-      clearInterval(timer)
-      watched.clear()
+      stopPolling()
     }
   }, 'client-hmr: bundle watches')
 
   // --- /plugins/events SSE channel ----------------------------------------
-  const connections = new Set<ServerResponse>()
 
   const publishGraph = (): void => {
     const line = sseData({ type: 'graph', graph: ctx.clientModules.graph() })
@@ -164,17 +169,30 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   const connect = (res: ServerResponse): void => {
-    res.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      'connection': 'keep-alive',
-    })
-    // Comment line on open so clients/proxies see a live channel even when
-    // no rebuild ever happens; EventSource frame parsing skips it naturally.
-    res.write(': connected\n\n')
+    // Baselines belong to the published artifact snapshots, not the current
+    // files. Catch up before this consumer receives its opening full graph.
+    if (connections.size === 0) syncWatches()
+    else pollWatches()
+    if (disposed || res.destroyed) {
+      if (connections.size === 0) stopPolling()
+      return
+    }
     connections.add(res)
+    res.once('close', () => {
+      connections.delete(res)
+      if (connections.size === 0) stopPolling()
+    })
+    // EventSource ignores the opening comment.
+    res.write(': connected\n\n')
     res.write(sseData({ type: 'graph', graph: ctx.clientModules.graph() }))
-    res.on('close', () => { connections.delete(res) })
+    if (connections.size === 0 || timer !== undefined) return
+    const current = setInterval(() => {
+      // Cleared intervals may already have queued a callback. An old callback
+      // must neither stat files nor publish into a replacement connection.
+      if (!disposed && timer === current && connections.size > 0) pollWatches()
+    }, pollIntervalMs)
+    timer = current
+    current.unref()
   }
 
   ctx.effect(() => {
@@ -189,7 +207,17 @@ export function apply(ctx: Context, config: Config): void {
           res.end()
           return
         }
-        connect(res)
+        if (disposed) {
+          res.destroy()
+          return
+        }
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+        })
+        if (req.method === 'HEAD') res.end()
+        else connect(res)
       },
     })
     const unsubscribeGraph = ctx.clientModules.onGraphChanged(publishGraph)
@@ -198,6 +226,8 @@ export function apply(ctx: Context, config: Config): void {
       for (const res of connections) res.write(line)
     })
     return () => {
+      disposed = true
+      stopPolling()
       unsubscribeGraph()
       unsubscribe()
       disposeRoute()

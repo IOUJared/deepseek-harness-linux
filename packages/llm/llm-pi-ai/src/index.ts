@@ -59,6 +59,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 
 import type { Context } from '@deepseek-ai/cordis'
+import { isAbsolute } from 'node:path'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
@@ -67,7 +68,8 @@ import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { PiAiAdapter } from './adapter.ts'
 import { authContextFrom, credentialStoreFrom } from './auth.ts'
 import { catalogProviderIds } from './catalog.ts'
-import { assertServiceable, Config, resolveProfiles } from './config.ts'
+import { assertManagedCodexProfile, assertServiceable, Config, resolveProfiles } from './config.ts'
+import { acquireCodexAccountOwner } from './codex-account-service.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
@@ -88,6 +90,9 @@ export type {
   ResolvedPiAiProviderProfile,
 } from './config.ts'
 export { recordKeyFor } from './auth.ts'
+export { CodexAccounts } from './codex-accounts.ts'
+export type { CodexAccountLogin, CodexAccountLoginResult, CodexAccountsDescription, CodexModelAccount } from './codex-accounts.ts'
+export type { CodexAccountId, PiAiAccountBinding } from './account-binding.ts'
 export { supportedProtocols } from './provider.ts'
 
 export const name = 'llm-pi-ai'
@@ -146,7 +151,18 @@ function directoryEntries(
 }
 
 /** Register one generic pi-ai adapter for all configured provider routes. */
-export function apply(ctx: Context, config: Config): void {
+export async function apply(ctx: Context, config: Config): Promise<void> {
+  const assertAccountActivation = (candidate: Config): void => {
+    if (candidate.nativeCodexAccounts && (candidate.nativeCodexAccountVault === undefined
+      || !isAbsolute(candidate.nativeCodexAccountVault))) {
+      throw new LlmError('Managed Codex accounts require an absolute private vault directory', 'CODEX_ACCOUNT_OWNER_UNAVAILABLE')
+    }
+    if (candidate.nativeCodexAccounts) {
+      const providers = structuredClone(candidate.providers.get()) as import('./config.ts').Options['providers']
+      for (const profile of resolveProfiles(providers, 'deferred').values()) assertManagedCodexProfile(profile)
+    }
+  }
+  assertAccountActivation(config)
   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
   const settingsNs = ctx.fiber.entry?.options.id ?? NS
   let lastRaw: ReturnType<Config['providers']['get']> | undefined
@@ -164,6 +180,7 @@ export function apply(ctx: Context, config: Config): void {
     const raw = config.providers.get()
     if (raw === lastRaw && memoized !== undefined) return memoized
     const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred')
+    if (config.nativeCodexAccounts) for (const profile of next.values()) assertManagedCodexProfile(profile)
     lastRaw = raw
     memoized = next
     return next
@@ -173,6 +190,7 @@ export function apply(ctx: Context, config: Config): void {
     const raw: unknown = next()
     if (this !== ctx.fiber) return raw
     const candidate = Config(raw as import('./config.ts').Options)
+    assertAccountActivation(candidate)
     assertServiceable(
       { providers: structuredClone(candidate.providers.get()) } as import('./config.ts').Options,
       { providers: structuredClone(config.providers.get()) } as import('./config.ts').Options,
@@ -209,10 +227,14 @@ export function apply(ctx: Context, config: Config): void {
   // through `ctx` per call, so they stay correct across the collection rebuilds
   // a configuration change causes, and a sign-in survives one.
   const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
+  const account = config.nativeCodexAccounts && config.nativeCodexAccountVault !== undefined
+    ? await acquireCodexAccountOwner(ctx, config.nativeCodexAccountVault, auth) : undefined
+  if (account !== undefined) ctx.effect(() => () => account.release())
   const adapter = new PiAiAdapter({
     profiles,
     resolveApiKey,
     auth,
+    ...account === undefined ? {} : { accountBinding: () => account.captureBinding() },
     resolveAttachments: () => ctx.get('attachments'),
     resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(
       attachments,
@@ -226,12 +248,16 @@ export function apply(ctx: Context, config: Config): void {
       )
     },
   })
+  account?.attach(adapter)
+  ctx.effect(() => () => adapter.dispose())
   // Independent of the route set: signing in is what makes a route worth
   // adding, so the flows are offered before any profile names their provider.
   // Scoped to the authorization seam rather than injected outright, because a
   // composition without it (headless, ACP) simply has no surface to sign in
   // from, while everything else this plugin does still works.
-  ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
+  ctx.inject(['authorization'], (authorized) => {
+    registerPiAiFlows(authorized, auth, config.nativeCodexAccounts ? new Set(['openai-codex']) : undefined)
+  })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as

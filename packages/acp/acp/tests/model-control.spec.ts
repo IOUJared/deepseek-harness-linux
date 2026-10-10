@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ReasoningEffortId, type LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTier, TextVerbosity, type LlmCallConfig, type LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { AcpModelControl } from '../src/model-control.ts'
 
 /** Minimal LLM catalog/runtime double for pure standard-option tests. */
@@ -31,6 +31,31 @@ function llmRuntime(overrides: Partial<LlmRuntime> = {}): LlmRuntime {
 }
 
 describe('ACP model configuration control', () => {
+  it('retains controls through effort/default changes but clears them on a different route', async () => {
+    const runtime = llmRuntime({
+      resolveCallConfig: (selection: LlmCallConfig) => Promise.resolve({ ...selection }),
+      listModels: () => Promise.resolve([
+        { provider: 'mock', id: 'mock', name: 'Mock' }, { provider: 'mock', id: 'other', name: 'Other' },
+      ]),
+      resolveModelInfo: (provider: string, model: string) => Promise.resolve({
+        provider, id: model, name: model,
+        reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }] },
+      }),
+    })
+    const selected = {
+      provider: 'mock', model: 'mock', serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high'),
+    }
+    const control = new AcpModelControl(runtime, selected)
+    await control.set('reasoning_effort', 'low')
+    expect(control.snapshot()).toEqual({ ...selected, reasoningEffort: 'low' })
+    await control.set('reasoning_effort', '')
+    expect(control.snapshot()).toEqual(selected)
+    await control.set('model', '["mock","mock"]')
+    expect(control.snapshot()).toEqual(selected)
+    await control.set('model', '["mock","other"]')
+    expect(control.snapshot()).toEqual({ provider: 'mock', model: 'other' })
+  })
+
   it('represents an absent route and validates value types before mutation', async () => {
     const control = new AcpModelControl(llmRuntime(), undefined)
 

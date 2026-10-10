@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-The shipped Web composition mounts this transport for live plugin changes. During development, a bundle watcher also supplies code rebuilds. Disabling the transport stops graph delivery to open pages.
+The shipped Web composition mounts this transport for live plugin changes. Bundle stat polling runs only while browser `GET /plugins/events` consumers are attached; native API/WebSocket and Session readers do not count. The first consumer catches up before its opening full graph, and the last disconnect stops the poller. Without consumers, this plugin performs no recurring artifact stats and holds no polling timer. During development, a bundle watcher also supplies code rebuilds. Disabling the transport stops graph delivery to open pages.
 
 ### Starting the reload chain
 
@@ -59,7 +59,7 @@ This section explains how the reload chain is built; observable behavior is cove
 
 ### Design concept
 
-The Host half watches each package's stamped entry artifact and serves `/plugins/events`. It forwards existing graph-change and rebuilt notifications; every new connection receives the current full graph. A graph describes the browser’s desired entries and carries no Host cleanup-completion guarantee. Host activation and cleanup remain owned by the Host lifecycle. The entry's mtime, ctime, and size identify the revision without hashing its contents; unchanged metadata requires no content read. Host restarts over unchanged artifacts keep the same revisions, so reconnecting the graph stream does not replace browser plugins. The browser half delegates both frame kinds to Client Modules, which serializes entry changes and waits for browser resource cleanup.
+The Host half shares one poller over each package's stamped entry artifact and serves `/plugins/events`; `HEAD` requests retain no consumer. It forwards existing graph-change and rebuilt notifications; every new connection receives a caught-up full graph. Client Modules still owns one-shot startup snapshots and HTTP artifact availability. A page may boot cached startup bytes before opening this stream; its opening graph reconciles changed dynamic-plugin revisions through the existing serial controller. This plugin does not refresh the first HTML snapshot before index injection. This polling lifecycle does not alter Host HMR, authentication or application composition. A graph describes the browser’s desired entries and carries no Host cleanup-completion guarantee. Host activation and cleanup remain owned by the Host lifecycle. The entry's mtime, ctime, and size identify the revision without hashing its contents; unchanged metadata requires no content read. Host restarts over unchanged artifacts keep the same revisions, so reconnecting the graph stream does not replace browser plugins. The browser half delegates both frame kinds to Client Modules, which serializes entry changes and waits for browser resource cleanup.
 
 ### The browser swap
 
@@ -114,6 +114,7 @@ None; this package neither assembles nor sends a provider request.
 These limits define what the reload driver does not preserve or restore. They are current package constraints, not a task backlog.
 
 - **Reload is coarse by design** — a fresh fiber and fresh components; React state inside the reloaded plugin is lost while the data layer (connection/runtime fibers, Session objects) is untouched. react-refresh-grade state preservation conflicts with re-executing the bundle and is deliberately out.
+- **Bootstrap replacement needs a page reload** — the already-materialized module-system bootstrap cannot be hot-replaced. An artifact changed while no browser was attached may need another page reload after the opening graph reports it.
 - **No failure rollback** — after the old fiber is torn down, a failed replacement does not restore the previous bundle.
 - **Web transport only** — Electron installation and backend restart handling do not use this SSE path. Entry reconciliation itself is transport-independent.
 

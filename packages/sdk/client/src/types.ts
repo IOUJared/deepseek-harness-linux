@@ -5,7 +5,7 @@
  * @module @deepseek-ai/dsh-sdk-client/types
  */
 
-import type { ContentBlock, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import type { SdkPromptContentBlock } from '@deepseek-ai/dsh-sdk-protocol'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
@@ -62,6 +62,10 @@ export interface DeepSeekHarnessOptions extends HarnessClientOptions {
   model?: string
   /** Adapter-owned reasoning effort for the selected provider/model route. */
   reasoningEffort?: ReasoningEffortId
+  /** Optional service tier supported by the exact selected route; omission preserves provider behavior. */
+  serviceTier?: ServiceTier
+  /** Optional text verbosity supported by the exact selected route; omission preserves provider behavior. */
+  textVerbosity?: TextVerbosity
   /** Maximum output tokens for each conversation-model request. */
   maxTokens?: number
 }

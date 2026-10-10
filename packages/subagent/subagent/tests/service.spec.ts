@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 
-import { HarnessError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { HarnessError, ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf } from '@deepseek-ai/dsh-scope'
 import SubagentRuntime, {
   foldSubagentDescriptor,
@@ -389,6 +389,15 @@ describe('subagent descriptors', () => {
     data,
   } as unknown as SessionEvent<'subagent/descriptor'>)
 
+  it.each([
+    ['agentServiceTier', 'auto'], ['agentServiceTier', 4],
+    ['agentTextVerbosity', 'verbose'], ['agentTextVerbosity', false],
+  ])('rejects invalid persisted %s controls', (field, value) => {
+    expect(() => foldSubagentDescriptor([event({
+      version: SUBAGENT_DESCRIPTOR_VERSION, mode: 'continuable', provider: 'spawn', label: 'child', [String(field)]: value,
+    })])).toThrow(String(field))
+  })
+
   it('omits absent fields, recovers a complete payload, and rejects unsupported versions', () => {
     expect(foldSubagentDescriptor([])).toBeUndefined()
     const minimal = snapshotSubagentDescriptor({ mode: 'one-shot', provider: 'spawn' })
@@ -411,6 +420,8 @@ describe('subagent descriptors', () => {
       agentProvider: 'deepseek',
       agentModel: 'chat',
       agentReasoningEffort: ReasoningEffortId('high'),
+      agentServiceTier: ServiceTier('priority'),
+      agentTextVerbosity: TextVerbosity('high'),
       persona: 'reviewer',
       toolFilter: { allow: ['read'], deny: ['bash'] },
     }
@@ -421,6 +432,8 @@ describe('subagent descriptors', () => {
       agentProvider: complete.agentProvider,
       agentModel: complete.agentModel,
       agentReasoningEffort: complete.agentReasoningEffort,
+      agentServiceTier: complete.agentServiceTier,
+      agentTextVerbosity: complete.agentTextVerbosity,
       persona: complete.persona,
       toolFilter: complete.toolFilter,
     })).toEqual(complete)

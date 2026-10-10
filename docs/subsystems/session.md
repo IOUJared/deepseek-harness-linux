@@ -766,6 +766,41 @@ The backends that consume this contract are on [persistence.md](persistence.md).
 
 The optional `application` selects a registered file handler without changing the system default; `workspacePathApplications({ path })` returns current handlers, names, icons, and default selection after Host path verification.
 
+<a id="prompt-admission"></a>
+
+## Prompt admission
+
+The [Session controller](../../packages/api/session-controller/README.md) reserves a request identity before asynchronous intake. Exact duplicates share the original result; changed payloads or unverifiable legacy reuse conflict. `promptAdmission` reads that identity without resuming an Agent or replaying a write. Its accepted states describe inbox or journal evidence, not execution, completion or an fsync barrier; unknown never permits resending. Rejection requires failure before inbox dispatch and no positive admission evidence. Optional `user-rpc.promptFingerprint` records the versioned raw-request digest outside model input; [compatibility](../persistence-changes/2026-10-07-prompt-admission-fingerprint.md) preserves existing records.
+
+Source: [`types.ts`](../../packages/api/session-controller/src/types.ts)
+
+```ts type-equiv
+/** Non-activating lookup of the original prompt admission identity. */
+interface SessionPromptAdmissionRequest {
+  readonly sessionId: SessionId
+  readonly requestId: SessionRequestId
+}
+```
+
+```ts type-equiv
+/** Positive admission evidence is not completion; unknown is never permission to resend. */
+type SessionPromptAdmissionValue =
+  | { readonly state: 'admitting' }
+  | {
+    readonly state: 'accepted'
+    readonly evidence: 'memory' | 'inbox' | 'journal'
+    readonly phase: 'queued' | 'claimed' | 'admitted' | 'recorded'
+    readonly messageId?: MessageId
+    readonly seq?: number
+  }
+  | {
+    readonly state: 'rejected'
+    readonly code: 'gateway/bad-request' | 'session/invalid-time-zone' | 'session/attachment-invalid'
+      | 'session/not-found' | 'session/agent-busy' | 'session/prompt-closed' | 'gateway/internal'
+  }
+  | { readonly state: 'unknown' }
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -893,6 +928,14 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('prompt') prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>
 
 /**
+ * Read original prompt admission evidence without activating its Agent or retrying a write.
+ * @param request - original Session and client request identities.
+ * @param signal - cancellation for a cold journal observation.
+ * @returns positive evidence, a retained definite rejection, or unknown; absence never permits resend.
+ */
+@Remote('promptAdmission') promptAdmission(request: SessionPromptAdmissionRequest, signal: AbortSignal): Promise<SessionPromptAdmissionValue>
+
+/**
  * Read one image proven reachable from the addressed Session log.
  * @param request - Session and attachment identities used for authorization.
  * @returns the durable attachment reference and base64-encoded bytes.
@@ -946,7 +989,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionSearchRequest](session-query.md)
+Types: [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionPromptAdmissionRequest](session.md#prompt-admission) · [SessionPromptAdmissionValue](session.md#prompt-admission) · [SessionSearchRequest](session-query.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

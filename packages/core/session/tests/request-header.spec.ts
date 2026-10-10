@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { Session, SessionId, SessionSeq, canonicalHeader, foldRequestHeader, headerEquals } from '@deepseek-ai/dsh-session'
 import type { EpochHeader, SessionEvent } from '@deepseek-ai/dsh-session'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 
 const CONFIG = { provider: 'mock', model: 'm' }
@@ -81,6 +81,36 @@ describe('foldRequestHeader', () => {
     }), { surfaceOp: 'append' })
     session.append('request/header', { header: { config: { provider: 'mock', model: 'other' } }, reason: 'change' })
     expect(foldRequestHeader(session.snapshotEvents())).toEqual({ config: { provider: 'mock', model: 'other' } })
+  })
+})
+
+describe('persisted request controls', () => {
+  function recordedHeader(): readonly SessionEvent[] {
+    const session = Session.create(SessionId('controls-source'))
+    session.append('turn/start', { turn: 1 })
+    session.append('request/header', { header: { config: { ...CONFIG, serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high') } }, reason: 'initial' })
+    return session.snapshotEvents()
+  }
+
+  it('restores explicit controls and retains omission in legacy headers', () => {
+    expect(Session.create(SessionId('controls-restored'), recordedHeader()).requestHeader()?.config).toEqual({ ...CONFIG, serviceTier: 'priority', textVerbosity: 'high' })
+    const source = Session.create(SessionId('legacy-header-source'))
+    source.append('turn/start', { turn: 1 })
+    source.append('request/header', { header: { config: CONFIG }, reason: 'initial' })
+    const restored = Session.create(SessionId('legacy-header-restored'), source.snapshotEvents())
+    expect(restored.requestHeader()?.config).toEqual(CONFIG)
+    expect(restored.requestHeader()?.config).not.toHaveProperty('serviceTier')
+    expect(restored.requestHeader()?.config).not.toHaveProperty('textVerbosity')
+  })
+
+  it.each([
+    ['serviceTier', 'fast'], ['serviceTier', null], ['textVerbosity', 'maximum'], ['textVerbosity', false],
+  ] as const)('refuses malformed serialized %s values', (field, value) => {
+    const rows = recordedHeader().map(event => event.type === 'request/header'
+      ? { ...event, data: { ...event.data, header: { ...event.data.header, config: { ...event.data.header.config, [field]: value } } } }
+      : event)
+    // Deliberately malformed persisted JSON reaches the durable parser, not a typed caller.
+    expect(() => Session.create(SessionId('invalid-controls'), JSON.parse(JSON.stringify(rows)))).toThrow(field)
   })
 })
 

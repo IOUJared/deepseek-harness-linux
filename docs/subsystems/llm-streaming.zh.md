@@ -568,6 +568,50 @@ interface LlmModelReasoningInfo {
 ```
 
 ```ts type-equiv
+/** Service tier accepted only by exact models advertising the value. */
+type ServiceTier = ('default' | 'priority') & Branded<'ServiceTier'>
+```
+
+```ts type-equiv
+/** Output detail accepted only by exact models advertising the value. */
+type TextVerbosity = ('low' | 'medium' | 'high') & Branded<'TextVerbosity'>
+```
+
+```ts type-equiv
+/** One exact model's supported service tier. */
+interface LlmServiceTierInfo {
+  id: ServiceTier
+  name: string
+  description?: string
+}
+```
+
+```ts type-equiv
+/** Supported service tiers; the advertised default is informational, not materialized. */
+interface LlmModelServiceTierInfo {
+  tiers: readonly LlmServiceTierInfo[]
+  defaultTier?: ServiceTier
+}
+```
+
+```ts type-equiv
+/** One exact model's supported text-output detail. */
+interface LlmTextVerbosityInfo {
+  id: TextVerbosity
+  name: string
+  description?: string
+}
+```
+
+```ts type-equiv
+/** Supported output detail; the advertised default is informational, not materialized. */
+interface LlmModelTextVerbosityInfo {
+  levels: readonly LlmTextVerbosityInfo[]
+  defaultLevel?: TextVerbosity
+}
+```
+
+```ts type-equiv
 /** Exact-route model metadata resolved by its owning adapter. */
 interface LlmResolvedModelInfo extends LlmModelInfo {
   /** Provider-owned context capacity when known. */
@@ -576,6 +620,10 @@ interface LlmResolvedModelInfo extends LlmModelInfo {
   defaultMaxTokens?: number
   /** Adapter-owned selectable reasoning levels when exposed. */
   reasoning?: LlmModelReasoningInfo
+  /** Explicit service-tier choices; absent means no selectable tier is exposed. */
+  serviceTier?: LlmModelServiceTierInfo
+  /** Explicit text-output detail choices; absent means no selectable detail is exposed. */
+  textVerbosity?: LlmModelTextVerbosityInfo
   /** Declared mid-conversation system prompt handling; absent means only a leading system message is read. */
   systemPromptUpdate?: SystemPromptUpdate
   /** Declared mid-conversation tool declaration handling; absent means every request declares the complete tool list. */
@@ -608,6 +656,10 @@ interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Explicit advertised service tier; omission does not choose a tier. */
+  serviceTier?: ServiceTier
+  /** Explicit advertised output detail; omission does not choose a level. */
+  textVerbosity?: TextVerbosity
   /**
    * Ordered conversation messages, exactly as the provider sees them. A
    * loop-built request passes the derived history (dsh-agent-loop), whose
@@ -740,7 +792,10 @@ interface LlmDiscoveredModel {
 }
 ```
 
+<a id="the-request-envelope-llmcallconfig-and-the-logged-header"></a>
 ### 请求信封：`LlmCallConfig` 与记录的 header
+
+`serviceTier`（`default` 或 `priority`）与 `textVerbosity`（`low`、`medium` 或 `high`）是按模型显式选择的请求参数。只接受确切模型公布的选项；不支持的值会在分发前以 `UNSUPPORTED_OPTION` 失败。元数据中的 `defaultTier` 与 `defaultLevel` 仅用于显示，不会填入省略的字段。显式参数保留在请求 header 中并用于后续步骤与恢复；更换路由会清除继承参数，除非新的完整选择显式提供它们。不含这些字段的旧 header 含义保持不变。
 
 循环从已记录状态构建每个请求。`EpochHeader` 记录调用配置，标记由适配器默认值提供的字段，并通过完整的 `request/header` 快照记录权威返回工具顺序（由 `toolOrder` 配置；未配置时按字典序）。渲染后的提示词是派生历史——surface 第 0 号节点上的 `system/message`，加上 `in-history` 路由追加的任何后续系统节点——因此请求头与派生历史共同使请求可由会话日志重建。见 [session.md](session.zh.md#the-request-header-event-requestheader) 与[可重建性 Agent Note](../../.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.zh.md)。
 
@@ -761,6 +816,10 @@ interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  /** Explicit tier; omission preserves provider behavior without materializing a default. */
+  serviceTier?: ServiceTier
+  /** Explicit output detail; omission preserves provider behavior. */
+  textVerbosity?: TextVerbosity
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -890,6 +949,60 @@ declare abstract class LlmAdapter {
 
 `ContentBlockType`（带 `index` 关联的块所携带的键集合）从上文的 [`ContentBlockMap`](#content-blocks-and-messages) 派生。
 
+<a id="codex-accounts"></a>
+
+## Codex 账户
+
+[pi-ai 提供方](../../packages/llm/llm-pi-ai/README.zh.md) 在显式启用后提供仅限 Host 的账户管理。添加操作返回未选中的账户及其持久化代次；选择账户先结束旧 SDK 工作，再提交选择。本地退出不会撤销发行方授权、采用旧凭据或选择替代账户。没有官方的同账户观察器时，邮箱、套餐与配额保持未知。
+
+来源：[`codex-accounts.ts`](../../packages/llm/llm-pi-ai/src/codex-accounts.ts)
+
+```ts type-equiv
+/** Public, non-secret account metadata. Unknown issuer facts stay null. */
+interface CodexModelAccount {
+  readonly opaqueId: CodexAccountId
+  readonly label: string
+  readonly email: string | null
+  readonly plan: string | null
+}
+```
+
+```ts type-equiv
+/** Committed selection; quota is absent until an official same-account observer exists. */
+interface CodexAccountsDescription {
+  readonly accounts: readonly CodexModelAccount[]
+  readonly selected: CodexAccountId | null
+  readonly epoch: number
+  readonly legacy: 'unadopted' | 'absent'
+}
+```
+
+```ts type-equiv
+/** Inputs for one new staging-key sign-in, never replacement of the selected grant. */
+interface CodexAccountLogin {
+  readonly label: string
+  readonly interaction: AuthorizationInteraction
+  readonly signal?: AbortSignal
+  /** Native callers guard selection before OAuth and again at the Add commit. */
+  readonly expectedEpoch?: number
+}
+```
+
+```ts type-equiv
+/** Exact account-add commit receipt; later reads cannot change its selection epoch. */
+interface CodexAccountLoginResult {
+  readonly account: CodexModelAccount
+  readonly epoch: number
+}
+```
+
+来源：[`account-binding.ts`](../../packages/llm/llm-pi-ai/src/account-binding.ts)
+
+```ts type-equiv
+/** Random local identity; never an issuer account id or token-derived value. */
+type CodexAccountId = Branded<'CodexAccountId'>
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -897,6 +1010,52 @@ declare abstract class LlmAdapter {
 ## Cordis API
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+
+<a id="ctxcodexaccounts--codexaccounts-abstract-seam"></a>
+
+### `ctx.codexAccounts` — `CodexAccounts` (abstract seam)
+
+Host-only service for an explicitly mounted native account owner.
+
+```ts cordis-catalog
+/** Describe accounts without grant contents.
+ * @returns committed public metadata.
+ */
+abstract describe(): Promise<CodexAccountsDescription>
+
+/** Add a new account without replacing selection.
+ * @param request - human-authorized sign-in interaction.
+ * @returns newly added unselected account and the exact committed selection epoch.
+ */
+abstract beginLogin(request: CodexAccountLogin): Promise<CodexAccountLoginResult>
+
+/** Cancel the active login. @returns after sign-in and staging-key cleanup settle. */
+abstract cancelLogin(): Promise<void>
+
+/** Select one account only after retiring the previous epoch.
+ * @param id - account explicitly selected by the human.
+ * @param expectedEpoch - optional committed selection epoch; native commands must supply it.
+ * @returns after old SDK work drains and selection commits.
+ */
+abstract select(id: CodexAccountId, expectedEpoch?: number): Promise<void>
+
+/** Forget an account without selecting another.
+ * @param id - account to tombstone and forget.
+ * @param expectedEpoch - optional committed selection epoch; native commands must supply it.
+ * @returns after drainage and local deletion, not issuer revocation.
+ */
+abstract signOut(id: CodexAccountId, expectedEpoch?: number): Promise<void>
+
+/** Forget managed accounts.
+ * @param expectedEpoch - optional committed selection epoch; native commands must supply it.
+ * @returns after local deletion; legacy remains untouched and issuer grants are not revoked.
+ */
+abstract signOutAll(expectedEpoch?: number): Promise<void>
+```
+
+Types: [CodexAccountId](llm-streaming.zh.md#codex-accounts) · [CodexAccountLogin](llm-streaming.zh.md#codex-accounts) · [CodexAccountLoginResult](llm-streaming.zh.md#codex-accounts) · [CodexAccountsDescription](llm-streaming.zh.md#codex-accounts)
+
+Source: [`packages/llm/llm-pi-ai/src/codex-accounts.ts`](../../packages/llm/llm-pi-ai/src/codex-accounts.ts)
 
 <a id="ctxdeepseekllmapiextensions--deepseekllmapiextensionregistry"></a>
 

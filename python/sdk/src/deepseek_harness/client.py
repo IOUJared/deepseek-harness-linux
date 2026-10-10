@@ -10,7 +10,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeAlias, TypeVar
+from typing import Callable, Literal, TypeAlias, TypeVar
 
 from pydantic import BaseModel
 
@@ -18,6 +18,13 @@ from .errors import JsonRpcError, TransportClosedError
 from .models import IncomingRequest, InitializeResponse, JsonObject, JsonValue, Notification
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+def _validate_model_controls(service_tier: object, text_verbosity: object) -> None:
+    if service_tier is not None and service_tier not in ("default", "priority"):
+        raise ValueError('service_tier must be "default" or "priority"')
+    if text_verbosity is not None and text_verbosity not in ("low", "medium", "high"):
+        raise ValueError('text_verbosity must be "low", "medium", or "high"')
 NotificationFilter: TypeAlias = Callable[[Notification], bool]
 
 
@@ -137,8 +144,11 @@ class HarnessClient:
         provider: str,
         model: str,
         reasoning_effort: str | None = None,
+        service_tier: Literal["default", "priority"] | None = None,
+        text_verbosity: Literal["low", "medium", "high"] | None = None,
         max_tokens: int | None = None,
     ) -> InitializeResponse:
+        _validate_model_controls(service_tier, text_verbosity)
         payload: JsonObject = {
             "cwd": str(Path(cwd).resolve()),
             "provider": provider,
@@ -146,6 +156,10 @@ class HarnessClient:
         }
         if reasoning_effort is not None:
             payload["reasoningEffort"] = reasoning_effort
+        if service_tier is not None:
+            payload["serviceTier"] = service_tier
+        if text_verbosity is not None:
+            payload["textVerbosity"] = text_verbosity
         if max_tokens is not None:
             payload["maxTokens"] = max_tokens
         try:

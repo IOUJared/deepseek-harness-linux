@@ -116,6 +116,8 @@ export class SubagentContinuationManager {
     const agentProvider = agentOptions.provider
     const agentModel = agentOptions.model
     const agentReasoningEffort = agentOptions.reasoningEffort
+    const agentServiceTier = agentOptions.serviceTier
+    const agentTextVerbosity = agentOptions.textVerbosity
     const descriptor = snapshotSubagentDescriptor({
       mode: 'continuable',
       provider: spec.provider,
@@ -123,6 +125,8 @@ export class SubagentContinuationManager {
       ...agentProvider !== undefined ? { agentProvider } : {},
       ...agentModel !== undefined ? { agentModel } : {},
       ...agentReasoningEffort !== undefined ? { agentReasoningEffort } : {},
+      ...agentServiceTier !== undefined ? { agentServiceTier } : {},
+      ...agentTextVerbosity !== undefined ? { agentTextVerbosity } : {},
       ...request.persona !== undefined ? { persona: request.persona } : {},
       ...request.toolFilter !== undefined ? { toolFilter: request.toolFilter } : {},
     })
@@ -443,6 +447,8 @@ export class SubagentContinuationManager {
           ...descriptor.agentReasoningEffort !== undefined
             ? { reasoningEffort: ReasoningEffortId(descriptor.agentReasoningEffort) }
             : {},
+          ...descriptor.agentServiceTier === undefined ? {} : { serviceTier: descriptor.agentServiceTier },
+          ...descriptor.agentTextVerbosity === undefined ? {} : { textVerbosity: descriptor.agentTextVerbosity },
         },
         composition: { persona: descriptor.persona, toolFilter: descriptor.toolFilter },
         signal: options.signal,

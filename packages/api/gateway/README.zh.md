@@ -40,9 +40,27 @@ Connection 可用时，Host 入口会在 Connection 共享的 `/api` FetchHandle
 
 Host 下行、Host 上行和 Client 上行泵的取消与停止状态归属单次读取，不保留已交付项的历史。下行结束也会唤醒尚未完成的上行读取。
 
-Host 组合可通过 `registerRemoteEvents()` 注册唯一的应用事件 source。Gateway 为它保留内部 `$events` logical endpoint，只接受空 `args`，并在 source 撤回时中止该注册打开的流。事件名单、参数校验、每个 Client 的队列及 opening `{ type: 'ready', clientId, host: { home } }` frame 中的 Host home 由 API Remotes 拥有。source factory 在返回 iterable 前同步挂好增量 listener，因此 Client 只在增量投递就绪后发布 generation 并开始 baseline 读取。
+Host 组合可通过 `registerRemoteEvents()` 注册唯一的应用事件 source。Gateway 为它保留内部 `$events` logical endpoint，只接受空 `args`，并在 source 撤回时中止该注册打开的流。事件名单、参数校验及 opening `{ type: 'ready', clientId, host: { home } }` frame 中的 Host home 由 API Remotes 拥有。source factory 在返回 iterable 前同步挂好增量 listener，因此 Client 只在增量投递就绪后发布 generation 并开始 baseline 读取。
 
 `hasLiveClient()` 检查已有 `$events` 记录中是否有未取消的流。已取消的流即使尚未完成 iterator 清理也不计入，单独的 WebSocket 也不计入。这一同步观察不保证后续投递成功或 Client Provider 已就绪。
+
+<a id="forwarded-event-buffers"></a>
+### 转发事件缓冲
+
+Gateway Config 校验正安全整数；各项上限分别适用于所列的每个拥有者。
+
+| Config | 默认值 | 拥有者 |
+|---|---:|---|
+| `remoteEventBufferItems` | 128 | 内置 source 的待消费队列及每个 Client 的待消费队列 |
+| `remoteEventBufferBytes` | 262144 | 上述队列中 UTF-8 JSON 快照的字节数 |
+| `remoteEventPendingItems` | 128 | 待完成的作用域调用，包括 Client 断线期间 |
+| `remoteEventPendingBytes` | 262144 | 序列化的待完成调用帧 |
+
+快照包含 JSON 元数据；Agent、Context、AbortSignal 及完成回调保留其身份，但不计入字节数。项数上限约束这些能力的数量。这些是保留 JSON 的上限，而非整个进程堆或 socket 外层封装的上限；每个读取者还可能持有一个已交付项。生产者的后续修改不会改变已接纳的快照，扇出共享其不可变编码。
+
+`gateway/event-overflow` 在 `details.field` 中标明 `source`、`client` 或 `pending`。source 超限会拒绝排队及已接纳的调用、撤回 listener，并关闭该注册的流；重试不会重建 source。Client 超限只撤销该代次的结果权限，并拒绝最后一份投递归其所有的调用；其他 Client 仍可回答。待完成调用超限只拒绝触发超限的调用。这些路径都不会静默委托给 `next()`。中止会立即清空待消费队列并撤销投递，即使读取者已暂停；普通 Client 断线则保留有界的待完成调用供重连使用。
+
+source factory 接收 `(signal, buffer)`。内置 Remotes 使用提供的 `TypertRemoteEventBuffer`；忽略它的第三方 factory 自行负责生产者侧缓冲上限。source 失败后，需先修正容量或负载，再显式重新注册 source。Client 通过拥有者的查询及基线恢复状态，而非重放通知。
 
 <a id="client-service-clientremote-ctx-key-remote"></a>
 ## Client 服务：`ClientRemote`（ctx key：`remote`）

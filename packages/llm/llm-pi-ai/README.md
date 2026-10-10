@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this plugin when a composition routes model requests through pi-ai's provider catalogs or through gateways that pi-ai's installed catalog does not describe. The `providers` dictionary is the whole configuration surface: each key is the provider route name a request selects with `GenerateOptions.provider`.
+Mount this plugin when a composition routes model requests through pi-ai's provider catalogs or through gateways that pi-ai's installed catalog does not describe. The `providers` dictionary configures routes: each key is the provider route name a request selects with `GenerateOptions.provider`.
 
 The adapter accepts the LLM service's [request-only user inputs](../llm/README.md#use-this-package) alongside durable history. User identity and attribution do not enter pi-ai content; assistant replay metadata and tool-call correlation remain attached to durable messages.
 
@@ -94,6 +94,18 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 A provider pi-ai ships a login for can be signed into through the harness authorization seam: the flow offers OAuth or an interactive key prompt (a key is typed into pi-ai's own login prompt, not into the settings form), and the resulting credential is stored in the harness credential store at `llm-pi-ai/<provider id>`. The stored sign-in authenticates its route beneath any `apiKeyEnv` override and refreshes itself under the store's cross-process lock; signing out deletes the stored record. A hand-declared route key outside the record grammar — a lowercase hyphenated identifier — cannot be signed into, because a record write for it refuses with `LlmError('UNSTORABLE_PROVIDER_ID')`; such a route authenticates through `apiKeyEnv` or ambient provider settings instead.
 
+### Managed native Codex accounts
+
+Enable `nativeCodexAccounts: true` with an explicit absolute `nativeCodexAccountVault` directory. The root-scoped, refcounted Host-only `codexAccounts` service offers `describe`, `beginLogin`, `cancelLogin`, `select`, `signOut`, and `signOutAll`; it has no Remote methods. Default profiles remain legacy-bound. The old `llm-pi-ai/openai-codex` grant is reported as unadopted, never imported or modified. Managed mode withdraws its legacy authorization flow; other provider flows are unchanged.
+
+The canonical vault uses a lifetime POSIX flock, private directory/file permissions and fsynced versioned commits containing opaque SDK grants plus non-secret metadata. Referenced grants validate on restore; unlisted crash-staging grants are pruned before admission. Removed committed accounts lose their grants in the same metadata commit, without deleting another in-progress Add. Lost ownership or an uncertain disk commit closes admission and aborts bound work; reopening is required. The last adapter releases the vault only after login, streams and underlying refresh/store operations drain. Compatible module reloads share that root owner; independent applications never share it.
+
+Add creates a random account UUID and does not select it. Its result freezes `{ account, epoch }` at the durable Add commit. Native callers pass `expectedEpoch` before OAuth and at Add commit, selection or local sign-out; stale commands fail with `CODEX_EPOCH_CONFLICT`. Labels contain 1–128 printable Unicode characters, at most 512 UTF-8 bytes; email and plan stay null. Selection retires the old epoch before drainage and commit. Sign-out never picks another account. Cancelling sign-in waits for late OAuth and staging cleanup; cancellation does not undo an already committed mutation, and local sign-out is not issuer revocation.
+
+Catalog metadata remains available without a selected account and never proves entitlement. Generation fails with `NO_CODEX_ACCOUNT` rather than falling back to legacy, ambient or another account. Managed dispatch requires the catalog-owned Codex protocol and official ChatGPT endpoint; credential and protocol/endpoint overrides are rejected before private grant access. Prepared calls retain the exact store, epoch and retirement signal; SDK session caches are namespaced by account and epoch.
+
+Private observer token projection uses public `Models.getAuth` and pi-ai's stored issuer account id; forced refresh uses the same account-key queue and refuses an issuer change. Tokens and issuer ids never enter DTOs, logs or Remote services, and no JWT-derived identity is inferred. No observer process or experimental token-login RPC is activated.
+
 ### Resolve the model catalog
 
 A profile's `models` list replaces the route's installed catalog rather than extending it; each entry defaults its unset fields from the installed model of the same id, so narrowing a route to two models, correcting one capacity, or adding a model newer than the installed catalog are one-line edits. `modelOverrides` reshapes individual installed-catalog models without that cost — correct one model, keep the other thirty-seven — and is refused when set beside a `models` list, on a hand-declared route, or naming a model the catalog does not describe, because a silently unchanged model would be a typo someone hunts for later.
@@ -104,9 +116,21 @@ A profile's `models` list replaces the route's installed catalog rather than ext
 
 For self-hosted Chat Completions endpoints, `thinkingTokenBudgetField` selects the reasoning-budget parameter, and `vllmPriority` sets an integer scheduler priority when the server enables priority scheduling. Template arguments accept `$var: thinking.budget`. `openai-responses` gateways can set `supportsMaxOutputTokens: false` to omit `max_output_tokens`; Azure and Codex transports ignore this shared compatibility field. These controls are opt-in; catalog-owned Anthropic effort and fallback capabilities are not configurable switches.
 
+### Request speed and output detail
+
+`GenerateOptions.serviceTier` accepts `default` (Standard) or `priority` (Fast · premium); `textVerbosity` accepts `low`, `medium`, or `high`. Exact-model metadata advertises these choices for `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6.1-sol`, and `gpt-6-luna`, using `openai-responses` at `https://api.openai.com/v1` or the catalog-owned Codex protocol at the official ChatGPT backend. Unknown models, other protocols and custom gateways expose no controls and reject explicit values before credentials or provider I/O. These controls do not add models to the installed catalog; newer ids still need an explicit `models` entry. Official API routes also expose the verified `gpt-5.2` and `gpt-5.4` controls; [OpenAI Fast pricing](https://developers.openai.com/api/docs/pricing.md#fast-pricing-data) and their [GPT-5.2](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.2.md) / [GPT-5.4](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.4.md#verbosity) guides document these options, while [ChatGPT sign-in model retirements](https://learn.chatgpt.com/docs/models.md#deprecated-codex-models) exclude them from Codex capabilities.
+
+Omission preserves the existing SDK request: no tier is injected, and Codex keeps its existing low verbosity. Informational defaults are not materialized. Explicit Standard sends `service_tier: "default"`; Fast sends `"priority"`; output detail merges `text.verbosity` without replacing text-format fields. The adapter captures explicit values before asynchronous credential resolution and forwards them through pi-ai's payload callback because its simple options discard the provider-specific named fields.
+
+[OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode.md) supports the priority request spelling, premium API pricing and possible Standard processing; [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed.md) documents higher subscription usage or credit charges and plan, workspace, client and rollout restrictions. Capability metadata describes request support, not account entitlement or actual delivered speed. [GPT-5.5 guidance](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5.md) and the [GPT-6 deployment checklist](https://developers.openai.com/api/docs/guides/deployment-checklist.md#set-up-textverbosity) document output-detail control; it is separate from reasoning effort and is not a token ceiling. Regional processing restrictions still apply, including unavailable GPT-6 Fast mode with EU data residency.
+
 ### Change configuration at runtime
 
 Each operation captures the current `providers` Config reference. New or changed provider profiles are validated before form persistence; unchanged catalog failures remain editable. Route-set or retry-policy changes update registration atomically, preserving previous routes if another adapter owns a requested route.
+
+### Release session resources
+
+Session IDs retain pi-ai transport caches across requests. Plugin disposal calls `PiAiAdapter.dispose()` to retire only its owned IDs; an ID shared with another adapter remains cached until the last owner disposes. Disposal immediately rejects new stream admission, aborts SDK-admitted requests and awaits their SDK terminal results and iterator closure before retiring IDs, including iterators suspended at a yielded chunk. Credential or image preparation that has not reached the SDK cannot delay disposal or dispatch afterwards. Repeated disposal shares one task and its outcome; draining and owned-ID cleanup failures are aggregated after every ID is attempted. Disposal requires the SDK to honor cancellation and produce a terminal result; it has no separate deadline. The SDK clears idle timers and initiates socket close synchronously; this does not await a socket-close acknowledgement. Requests without a non-empty session ID never trigger global cleanup.
 
 ### Discover models from endpoints
 
@@ -132,7 +156,7 @@ This section explains the design behind the adapter; the observable behavior is 
 
 ### Design philosophy
 
-The adapter is built on immutable snapshots and per-operation resolution. Each operation captures a whole snapshot — the profiles plus a `createModels()` collection holding the `Provider` each route built — before its first `await`, and a configuration change builds a new collection rather than mutating the one in use, so a request that started under one configuration never finishes under another. A route's own credential reference resolves through the harness seam and rides as the request's `apiKey` option, which pi-ai treats as the highest-priority auth override — that is what keeps the fail-loud reference semantics. Everything that override does not cover reaches pi-ai through the collection's own auth: the credential store holds the records a login wrote and a refresh rotates (addressed as `llm-pi-ai/<provider id>`), and the auth context answers the ambient questions a provider asks while resolving. Both are stable across snapshots, so a configuration change rebuilds the collection without forgetting who is signed in. Runtime imports use pi-ai's provider, API, and utility entry points; `src/models.ts` supplies the small model-helper subset this adapter needs without evaluating pi-ai's aggregate entry point.
+The adapter is built on immutable snapshots and per-operation resolution. Each operation captures a whole snapshot — the profiles plus a `createModels()` collection holding the `Provider` each route built — before its first `await`, and a configuration change builds a new collection rather than mutating the one in use, so a request that started under one configuration never finishes under another. A route's own credential reference resolves through the harness seam and rides as the request's `apiKey` option, which pi-ai treats as the highest-priority auth override — that is what keeps the fail-loud reference semantics. Everything that override does not cover reaches pi-ai through the collection's own auth: the credential store holds the records a login wrote and a refresh rotates (addressed as `llm-pi-ai/<provider id>`), and the auth context answers the ambient questions a provider asks while resolving. Both are stable across snapshots, so a configuration change rebuilds the collection without forgetting who is signed in. Model helpers use pi-ai's provider, API, and utility entry points; `src/models.ts` supplies the small model-helper subset this adapter needs. Session cleanup uses pi-ai's public aggregate export.
 
 ### Source map
 
@@ -144,6 +168,7 @@ The adapter is built on immutable snapshots and per-operation resolution. Each o
 | [`src/config.ts`](src/config.ts) | Profile schema, resolution, and serviceability checks |
 | [`src/catalog.ts`](src/catalog.ts) | Installed-catalog integration and drift gates |
 | [`src/models.ts`](src/models.ts) | Model collections, static providers, and reasoning levels over narrow pi-ai entry points |
+| [`src/request-controls.ts`](src/request-controls.ts) | Exact-route speed/detail metadata, pre-I/O admission and frozen payload forwarding |
 | [`src/provider.ts`](src/provider.ts) | The supported-protocol table and provider construction |
 | [`src/context.ts`](src/context.ts) | Harness-to-pi-ai context conversion, image handling, replay restore |
 | [`src/stream.ts`](src/stream.ts) | pi-ai event conversion into harness `StreamChunk` values |
@@ -187,7 +212,7 @@ The selected catalog model receives one system prompt (`GenerateOptions.system`,
 
 #### Token effect
 
-Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state.
+Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state. Output detail can change generated length; Fast requests can increase charges or subscription usage without changing the prompt.
 
 #### KV Cache effect
 
@@ -214,6 +239,7 @@ Recorded response content appends to the next request and does not invalidate it
 
 These limits define where the adapter stops and future work begins. They are current package constraints, not a general pi-ai comparison or a task backlog.
 
+- **Managed accounts require explicit POSIX vault activation** — real OAuth, account entitlement and charged generation need separate qualification; keyless Loader tests use synthetic OAuth/network responses. Legacy migration, issuer token revocation and an official same-account quota observer are not implemented. Experimental observer token transport requires separate visible consent; no quota or identity is fabricated.
 - **`maxRequestImageBytes` counts base64 image payload only** — text, tools, descriptors, and JSON structure ride outside the bound, so it must sit below the gateway's request-body cap with headroom.
 - **A sign-in lives only in the process that started it** — an authorization attempt is not durable, so reloading the page mid-login abandons it and the human starts over. Signing out is `deleteRecord` on the stored record, which forgets it locally without telling the issuer.
 - **Provider-native discovery answers through this plugin's ambient context** — a route naming no credential defers to the catalog provider's own resolution, which asks for environment values (`AZURE_OPENAI_API_KEY`, `AWS_PROFILE`, and each provider's own set) and for local credential files. Both questions are answered here: the credential seam is consulted before the process environment, and file existence is checked against the host process's filesystem with `~` expanded. What it cannot do is *read* a credential file's contents — a provider that parses `~/.aws/credentials` itself does so directly, outside the seam.

@@ -26,8 +26,10 @@
  * @module dsh-llm-pi-ai/adapter
  */
 
+import { cleanupSessionResources } from '@earendil-works/pi-ai'
 import type {
   Api,
+  AssistantMessageEventStream,
   AuthContext,
   CredentialStore,
   Model,
@@ -57,10 +59,15 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
-import type { ResolvedPiAiProviderProfile } from './config.ts'
+import { assertManagedCodexProfile, type ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
+import { requestControlInfo, requestControlOptions } from './request-controls.ts'
 import { toStreamChunks } from './stream.ts'
+import type { PiAiAccountBinding } from './account-binding.ts'
+
+// pi-ai caches by session ID across collections and adapter instances.
+const sessionOwners = new Map<string, { count: number }>()
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -68,6 +75,8 @@ interface PiAiSnapshot {
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /** Providers for exactly those profiles; never mutated once published. */
   models: Models
+  /** Managed Codex identity frozen with this collection; absent preserves legacy auth. */
+  accountBinding?: PiAiAccountBinding
 }
 
 /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
@@ -92,6 +101,8 @@ export interface PiAiAdapterOptions {
    * every request no matter how often the human signed in.
    */
   auth: PiAiAuthInjection
+  /** Explicit account-owner integration only; omission keeps the fixed legacy store. */
+  accountBinding?: () => PiAiAccountBinding
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
   /** Bridge one attachment reference into the current model-tool execution world. */
@@ -218,9 +229,91 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
  */
 export class PiAiAdapter extends LlmAdapter {
   private snapshot: PiAiSnapshot | undefined
+  private readonly sessionIds = new Map<string, { count: number }>()
+  private readonly accountSessions = new Map<string, PiAiAccountBinding>()
+  private readonly retiredBindings = new WeakMap<PiAiAccountBinding, Promise<void>>()
+  private disposed = false
+  private disposal: Promise<void> | undefined
+  private readonly activeStreams = new Set<{
+    consumer: AbortController
+    iterator: AsyncGenerator<StreamChunk>
+    terminal: Promise<unknown>
+    accountBinding?: PiAiAccountBinding
+  }>()
 
   constructor(private readonly config: PiAiAdapterOptions) {
     super()
+  }
+
+  /**
+   * Close stream admission, abort SDK-admitted requests and await their terminal
+   * results and iterator closure, then retire owned session resources. Shared IDs remain until their last adapter owner
+   * disposes. Every unshared ID is attempted even if draining or cleanup fails.
+   * SDK cleanup initiates socket close without awaiting ACK.
+   * @returns the shared disposal task, rejecting with aggregated failures.
+   */
+  dispose(): Promise<void> {
+    this.disposed = true
+    return this.disposal ??= this.retireResources()
+  }
+
+  /**
+   * Drain one synchronously retired account epoch without disposing other routes.
+   * @param binding - exact immutable epoch; its retirement signal must already be aborted.
+   * @returns after SDK terminal leases and isolated session caches retire.
+   */
+  retireAccountBinding(binding: PiAiAccountBinding): Promise<void> {
+    if (!binding.retireSignal.aborted) {
+      return Promise.reject(new LlmError('Retire the account epoch before drainage', 'ACCOUNT_NOT_RETIRED'))
+    }
+    const previous = this.retiredBindings.get(binding)
+    if (previous !== undefined) return previous
+    const task = this.drainResources(binding)
+    this.retiredBindings.set(binding, task)
+    return task
+  }
+
+  private retireResources(): Promise<void> {
+    return this.drainResources()
+  }
+
+  private async drainResources(binding?: PiAiAccountBinding): Promise<void> {
+    const active = [...this.activeStreams].filter(stream => binding === undefined || stream.accountBinding === binding)
+    for (const { consumer } of active) consumer.abort('pi-ai SDK owner retired')
+    const drained = await Promise.allSettled(active.flatMap(({ iterator, terminal }) => [iterator.return(undefined), terminal]))
+    const errors: unknown[] = []
+    for (const result of drained) {
+      if (result.status === 'rejected') errors.push(result.reason)
+    }
+    for (const [sessionId, owners] of this.sessionIds) {
+      if (binding !== undefined && this.accountSessions.get(sessionId) !== binding) continue
+      this.sessionIds.delete(sessionId)
+      this.accountSessions.delete(sessionId)
+      if (--owners.count > 0) continue
+      sessionOwners.delete(sessionId)
+      try {
+        cleanupSessionResources(sessionId)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length > 0) throw new AggregateError(errors, 'Failed to dispose pi-ai adapter session resources')
+  }
+
+  private assertStreamAdmission(): void {
+    if (this.disposed) throw new LlmError('pi-ai adapter is disposed', 'ADAPTER_DISPOSED')
+  }
+
+  private ownSession(sessionId: string | undefined, accountBinding?: PiAiAccountBinding): void {
+    this.assertStreamAdmission()
+    accountBinding?.assertCurrent()
+    // Codex treats an empty ID like an omitted ID, including for global cleanup.
+    if (sessionId === undefined || sessionId.length === 0 || this.sessionIds.has(sessionId)) return
+    const owners = sessionOwners.get(sessionId) ?? { count: 0 }
+    owners.count++
+    sessionOwners.set(sessionId, owners)
+    this.sessionIds.set(sessionId, owners)
+    if (accountBinding !== undefined) this.accountSessions.set(sessionId, accountBinding)
   }
 
   /**
@@ -229,14 +322,19 @@ export class PiAiAdapter extends LlmAdapter {
    * brand-new collection, leaving any snapshot an operation already captured
    * untouched for as long as that operation holds it.
    */
-  private current(): PiAiSnapshot {
+  private current(provider: string, generation = false): PiAiSnapshot {
     const profiles = this.config.profiles()
-    if (this.snapshot?.profiles === profiles) return this.snapshot
-    const models: MutableModels = createModels(this.config.auth)
+    if (provider === 'openai-codex' && this.config.accountBinding !== undefined) {
+      const profile = profiles.get(provider)
+      if (profile !== undefined) assertManagedCodexProfile(profile)
+    }
+    const accountBinding = generation && provider === 'openai-codex' ? this.config.accountBinding?.() : undefined
+    if (this.snapshot?.profiles === profiles && this.snapshot.accountBinding === accountBinding) return this.snapshot
+    const models: MutableModels = createModels(accountBinding?.auth ?? this.config.auth)
     for (const profile of profiles.values()) {
       if (profile.piProvider !== undefined) models.setProvider(profile.piProvider)
     }
-    this.snapshot = { profiles, models }
+    this.snapshot = { profiles, models, ...accountBinding === undefined ? {} : { accountBinding } }
     return this.snapshot
   }
 
@@ -266,16 +364,16 @@ export class PiAiAdapter extends LlmAdapter {
     // The configured name, not the route key: `displayName` exists so a
     // deployment can label a route, and a label only the configuration surface
     // reads would leave every selector showing the raw key.
-    return { id: provider, name: this.current().profiles.get(provider)?.displayName ?? provider }
+    return { id: provider, name: this.current(provider).profiles.get(provider)?.displayName ?? provider }
   }
 
   override providerRetryPolicy(provider: string): ResolvedRetryPolicy | undefined {
-    return this.current().profiles.get(provider)?.retryPolicy
+    return this.current(provider).profiles.get(provider)?.retryPolicy
   }
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     return Promise.resolve().then(() => {
-      const snapshot = this.current()
+      const snapshot = this.current(provider)
       this.profileOf(snapshot, provider)
       return snapshot.models.getModels(provider).map(model => ({
         provider,
@@ -292,7 +390,7 @@ export class PiAiAdapter extends LlmAdapter {
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     return Promise.resolve().then(() => {
-      const snapshot = this.current()
+      const snapshot = this.current(provider)
       return this.modelInfo(snapshot, provider, model)
     })
   }
@@ -312,11 +410,12 @@ export class PiAiAdapter extends LlmAdapter {
       context: { contextWindow: resolvedModel.contextWindow },
       ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
       ...reasoningInfo(resolvedModel, defaultLevel),
+      ...requestControlInfo(resolvedModel),
     }
   }
 
   override prepareCall(provider: string, model: string, _signal?: AbortSignal): Promise<PreparedAdapterCall> {
-    const snapshot = this.current()
+    const snapshot = this.current(provider, true)
     return Promise.resolve({
       model: this.modelInfo(snapshot, provider, model),
       stream: options => this.streamWithSnapshot(options, snapshot),
@@ -324,13 +423,32 @@ export class PiAiAdapter extends LlmAdapter {
   }
 
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    return this.streamWithSnapshot(options, this.current())
+    return this.streamWithSnapshot(options, this.current(options.provider, true))
   }
 
-  private async * streamWithSnapshot(
+  private streamWithSnapshot(options: GenerateOptions, snapshot: PiAiSnapshot): AsyncIterable<StreamChunk> {
+    const consumer = new AbortController()
+    const iterator = this.iterateWithSnapshot(options, snapshot, consumer, (events) => {
+      const active = {
+        consumer, iterator, terminal: events.result(),
+        ...options.provider === 'openai-codex' && snapshot.accountBinding !== undefined
+          ? { accountBinding: snapshot.accountBinding } : {},
+      }
+      this.activeStreams.add(active)
+      return () => { this.activeStreams.delete(active) }
+    })
+    return iterator
+  }
+
+  private async * iterateWithSnapshot(
     options: GenerateOptions,
     snapshot: PiAiSnapshot,
-  ): AsyncIterable<StreamChunk> {
+    consumer: AbortController,
+    admit: (events: AssistantMessageEventStream) => () => void,
+  ): AsyncGenerator<StreamChunk> {
+    this.assertStreamAdmission()
+    const accountBinding = options.provider === 'openai-codex' ? snapshot.accountBinding : undefined
+    accountBinding?.assertCurrent()
     if (options.stop !== undefined) {
       throw new LlmError('llm-pi-ai does not support GenerateOptions.stop', 'UNSUPPORTED_OPTION')
     }
@@ -345,14 +463,24 @@ export class PiAiAdapter extends LlmAdapter {
       model,
       options.reasoningEffort ?? profile.reasoning,
     )
+    const controls = requestControlOptions(model, options)
+    if (accountBinding !== undefined && profile.apiKeyEnv !== undefined) {
+      throw new LlmError('Managed Codex accounts cannot use an apiKeyEnv override', 'ACCOUNT_AUTH_OVERRIDE')
+    }
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
+    accountBinding?.assertCurrent()
+    if (accountBinding !== undefined && apiKey !== undefined) {
+      throw new LlmError('Managed Codex accounts cannot use a request credential override', 'ACCOUNT_AUTH_OVERRIDE')
+    }
 
-    const consumer = new AbortController()
-    const upstream = options.signal === undefined
-      ? consumer.signal
-      : AbortSignal.any([options.signal, consumer.signal])
+    const signals = [consumer.signal]
+    if (options.signal !== undefined) signals.push(options.signal)
+    if (accountBinding !== undefined) signals.push(accountBinding.retireSignal)
+    const upstream = AbortSignal.any(signals)
     const streamIdleTimeoutMs = profile.streamIdleTimeoutMs
     using watchdog = idleWatchdog(upstream, streamIdleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
+    let retireStream: (() => void) | undefined
+    let sdkTerminal: Promise<unknown> | undefined
 
     try {
       const containsImage = options.messages.some(message => contentHasImage(message.content))
@@ -377,16 +505,23 @@ export class PiAiAdapter extends LlmAdapter {
             maxBytes: profile.requestImageMaxBytes,
           },
         }, onReplayDegrade)
+      const sessionId = options.sessionId === undefined ? undefined
+        : accountBinding === undefined || String(options.sessionId).length === 0 ? String(options.sessionId)
+          : `${accountBinding.opaqueId}:${accountBinding.epoch}:${String(options.sessionId)}`
+      this.ownSession(sessionId, accountBinding)
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
+        ...controls,
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
-        ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+        ...sessionId === undefined ? {} : { sessionId },
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
         headers: requestHeaders(profile.headers),
       })
+      sdkTerminal = events.result()
+      retireStream = admit(events)
       const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
       let exhausted = false
       try {
@@ -420,6 +555,12 @@ export class PiAiAdapter extends LlmAdapter {
       throw error
     } finally {
       consumer.abort('pi-ai stream consumer stopped')
+      try {
+        // EventStream.return() stops iteration, not the SDK background producer.
+        await sdkTerminal
+      } finally {
+        retireStream?.()
+      }
     }
   }
 }

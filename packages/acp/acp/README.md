@@ -73,6 +73,8 @@ One connection can run several sessions at once, each independent. The calls a c
 | `session/update` | Committed assistant messages and thoughts, generic tool lifecycle, configuration changes, and context usage, serialized per session. |
 | `session/request_permission` | A permission prompt with one-shot allow/reject choices; your client can answer automatically. |
 
+Restored service-tier/text-verbosity controls survive same-route effort edits and prompt pinning; selecting another provider/model clears them. ACP exposes no additional selectors for these controls.
+
 Session configuration offers opaque provider/model choices from the live LLM service catalog and a `reasoning_effort` selector when the exact model declares one. A prompt snapshots that selection before asynchronous image admission and pins it across every model step in that turn; a concurrent option change applies to the next turn. ACP clients are trusted controllers: stdio MCP entries authorize their absolute commands and environment, HTTP entries authorize their absolute HTTP(S) URLs and headers, and any initial connection or discovery failure rolls back the unpublished Agent. Unsupported surfaces are omitted or rejected: `session/load`, deletion, fork, additional directories, SSE or ACP-transport MCP, modes, commands, plans, terminals, client filesystem operations, and elicitation.
 
 -----

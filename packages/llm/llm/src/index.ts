@@ -30,7 +30,7 @@ import type {
 import { freezeMessage } from './message.ts'
 import { resolveRetryPolicy } from './retry-policy.ts'
 import type { ResolvedRetryPolicy } from './retry-policy.ts'
-import type { ProviderRequestId } from './brand.ts'
+import type { ProviderRequestId, ServiceTier, TextVerbosity } from './brand.ts'
 import { callConfigEquals } from './call-config.ts'
 import type { LlmCallConfig, LlmCallConfigAdapterDefaults } from './call-config.ts'
 import { HarnessError, INVALID_CREDENTIAL_CODE } from './error.ts'
@@ -747,6 +747,34 @@ export class LlmRuntime extends TypertRemoteService {
     return this.normalizeModelInfo(registration, model, resolved)
   }
 
+  /** Validate and detach finite choices supplied by exact-model adapter configuration. */
+  private detachedRequestOptions<T extends ServiceTier | TextVerbosity>(
+    provider: string,
+    model: string,
+    field: string,
+    choices: readonly { id: T; name: string; description?: string }[],
+    allowed: readonly string[],
+    defaultValue: T | undefined,
+  ): { id: T; name: string; description?: string }[] {
+    const seen = new Set<string>()
+    if (!Array.isArray(choices) || choices.length === 0) {
+      throw new LlmError(`invalid ${field} metadata for provider "${provider}" model "${model}"`, 'INVALID_MODEL_OPTION')
+    }
+    const detached = choices.map((choice) => {
+      if (!allowed.includes(choice.id) || seen.has(choice.id)
+        || typeof choice.name !== 'string' || choice.name.length === 0
+        || choice.description !== undefined && typeof choice.description !== 'string') {
+        throw new LlmError(`invalid ${field} choice for provider "${provider}" model "${model}"`, 'INVALID_MODEL_OPTION')
+      }
+      seen.add(choice.id)
+      return { id: choice.id, name: choice.name, ...choice.description === undefined ? {} : { description: choice.description } }
+    })
+    if (defaultValue !== undefined && !seen.has(defaultValue)) {
+      throw new LlmError(`unknown ${field} default for provider "${provider}" model "${model}"`, 'INVALID_MODEL_OPTION')
+    }
+    return detached
+  }
+
   /** Validate and detach one adapter-returned exact model result. */
   private normalizeModelInfo(
     registration: AdapterRegistration,
@@ -810,6 +838,20 @@ export class LlmRuntime extends TypertRemoteService {
       ...inputModalities === undefined ? {} : { inputModalities },
       ...context === undefined ? {} : { context: { contextWindow: context.contextWindow } },
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
+      ...resolved.serviceTier === undefined ? {} : {
+        serviceTier: {
+          tiers: this.detachedRequestOptions(provider, model, 'serviceTier', resolved.serviceTier.tiers,
+            ['default', 'priority'], resolved.serviceTier.defaultTier),
+          ...resolved.serviceTier.defaultTier === undefined ? {} : { defaultTier: resolved.serviceTier.defaultTier },
+        },
+      },
+      ...resolved.textVerbosity === undefined ? {} : {
+        textVerbosity: {
+          levels: this.detachedRequestOptions(provider, model, 'textVerbosity', resolved.textVerbosity.levels,
+            ['low', 'medium', 'high'], resolved.textVerbosity.defaultLevel),
+          ...resolved.textVerbosity.defaultLevel === undefined ? {} : { defaultLevel: resolved.textVerbosity.defaultLevel },
+        },
+      },
       ...resolved.systemPromptUpdate === undefined ? {} : { systemPromptUpdate: resolved.systemPromptUpdate },
       ...resolved.toolUpdate === undefined ? {} : { toolUpdate: resolved.toolUpdate },
     }
@@ -886,6 +928,20 @@ export class LlmRuntime extends TypertRemoteService {
     config: LlmCallConfig,
     info: LlmResolvedModelInfo,
   ): { config: LlmCallConfig; context?: LlmModelContext; modelInfo: LlmResolvedModelInfo } {
+    if (config.serviceTier !== undefined
+      && !info.serviceTier?.tiers.some(tier => tier.id === config.serviceTier)) {
+      throw new LlmError(
+        `provider "${config.provider}" model "${config.model}" does not support serviceTier "${config.serviceTier}"`,
+        'UNSUPPORTED_OPTION',
+      )
+    }
+    if (config.textVerbosity !== undefined
+      && !info.textVerbosity?.levels.some(level => level.id === config.textVerbosity)) {
+      throw new LlmError(
+        `provider "${config.provider}" model "${config.model}" does not support textVerbosity "${config.textVerbosity}"`,
+        'UNSUPPORTED_OPTION',
+      )
+    }
     const defaulted = config.maxTokens === undefined && info.defaultMaxTokens !== undefined
       ? { ...config, maxTokens: info.defaultMaxTokens }
       : config

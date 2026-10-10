@@ -1,0 +1,10 @@
+version: 1
+scenario: request-controls
+profile: headless
+composition: request-controls
+recording: authored
+header:
+  class: request-controls
+  pin: true
+  changes: 3
+  promptChanges: 1

@@ -56,7 +56,9 @@ kind: "package-reference"
 
 ### 一次性与可继续子级
 
-一次性子 agent 只运行一次，并以单个结果结算，可附带可选的结构化输出与失败时的安全诊断。启动请求可以通过 `agentOptions` 覆盖子 Agent 的提供方、模型、推理强度与输出 token 上限；每个请求的选项都要求提供方声明对应能力。可继续子 agent 保留持久会话并按顺序接受后续消息：调用方收到稳定的子 agent id、发送相邻 Agent 消息，并可中断当前轮次而不销毁子 agent。工具行的 `backgroundMode` 选择形态（默认 `one-shot`，或在支持的提供方上使用 `continuable`）。
+一次性子 agent 只运行一次，并以单个结果结算，可附带可选的结构化输出与失败时的安全诊断。启动请求可以通过 `agentOptions` 覆盖子 Agent 的提供方、模型、推理强度、服务档位、文本详略与输出 token 上限；每个请求的选项都要求提供方声明对应能力。可继续子 agent 保留持久会话并按顺序接受后续消息：调用方收到稳定的子 agent id、发送相邻 Agent 消息，并可中断当前轮次而不销毁子 agent。工具行的 `backgroundMode` 选择形态（默认 `one-shot`，或在支持的提供方上使用 `continuable`）。
+
+服务档位与文本详略仅在子级确切提供方／模型与父级最新已记录请求一致时继承；显式子级值覆盖继承。更改路由会清除继承控制。可继续描述符保留显式值用于冷恢复；旧描述符保持这些值缺省。
 
 ### 消息、中断与发现
 
@@ -117,7 +119,7 @@ kind: "package-reference"
 - **发布即边界**——发布前提供方拥有设置并须在失败时回滚；发布后调用方拥有运行并须 dispose（资源释放）它。
 - **注册受 effect 作用域约束**——移除提供方会阻止新启动，但绝不撤销已接受的运行。
 - **Agent 消息权限基于确切相邻关系**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。
-- **描述符仅进日志**——它是会话事件，不进入模型历史，并跨压缩（compaction）保留；可继续描述符会显式记录解析后的子级提供方、模型与推理强度，用于冷恢复。
+- **描述符仅进日志**——它是会话事件，不进入模型历史，并跨压缩（compaction）保留；可继续描述符会显式记录解析后的子级提供方、模型、推理强度及显式的服务档位／文本详略控制，用于冷恢复。
 - **本 runtime 为子代理回答归档准入**（[接缝](../../workspace/workspace/README.zh.md)）——`workspace/session-activity` 把回合中的在线子代理子孙作为 `subagent` 族报告：按本包记录的持久化血缘查找（带 subagent 来源的 `parentSession`，任意深度，从不包括 fork），组合了 Session query 服务时经一次活会话 observation 从各 child 的描述符取名称，否则只报 id；`workspace/session-stop` 以父级原因逐个取消它们，一个拒绝取消的 child 只记日志，其兄弟仍会停止。父级自身的回合、它的任务以及已归档血缘的步骤门禁归 API Session Controller。
 
 </details>

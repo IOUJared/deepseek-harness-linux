@@ -13,7 +13,7 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import type { ContentBlock, GenerateOptions, MessageId, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { ToolCallId, createUserMessage, LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage, LlmAdapter, ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, maxTokensResponse, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import SubagentRuntime, {
@@ -594,6 +594,39 @@ describe('SubagentRuntime.startContinuable', () => {
     expect(loaded.meta.id).toBe(started.childId)
     expect(loaded.meta.parentSession).toBe(SessionId('parent'))
     expect(loaded.meta.origin).toBe('subagent')
+  })
+
+  it('persists selected request controls and restores them for both cold-resumed child requests', async () => {
+    class ControlledAdapter extends MockAdapter {
+      override async resolveModel(provider: string, model: string) {
+        return {
+          ...await super.resolveModel(provider, model),
+          serviceTier: { tiers: [{ id: ServiceTier('priority'), name: 'Priority' }] },
+          textVerbosity: { levels: [{ id: TextVerbosity('high'), name: 'High' }] },
+        }
+      }
+    }
+    const adapter = new ControlledAdapter([textResponse('first answer'), textResponse('resumed answer')])
+    const { ctx, parent } = await setupWith(adapter)
+    parkParent(ctx, parent)
+    const controls = { serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high') }
+    const childControls: Array<object> = []
+    ctx.on('agent/created', ({ agent }) => {
+      if (agent !== parent) childControls.push({ serviceTier: agent.options.serviceTier, textVerbosity: agent.options.textVerbosity })
+    })
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent), request: { parent, prompt: message('selected controls'), agentOptions: controls },
+    })
+    await waitNoActivation(ctx, started.childId)
+    const stored = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(stored.events.find(event => event.type === 'subagent/descriptor')?.data)
+      .toMatchObject({ agentServiceTier: 'priority', agentTextVerbosity: 'high' })
+    await queuePrompt(ctx, parent, started.childId, message('resume controls'))
+    await waitNoActivation(ctx, started.childId)
+    expect(childControls).toEqual([controls, controls])
+    expect(adapter.requests).toHaveLength(2)
+    expect(adapter.requests.map(request => ({ serviceTier: request.serviceTier, textVerbosity: request.textVerbosity })))
+      .toEqual([controls, controls])
   })
 
   it('persists a selected reasoning effort and reapplies it on cold resume', async () => {

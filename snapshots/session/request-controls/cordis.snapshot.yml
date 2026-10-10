@@ -1,0 +1,23 @@
+# Only the external model stream is replayed; the shipped headless composition runs.
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  disabled: true
+
+- id: plugin-package-inventory-deepseek
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        providers:
+          - id: controls-fixture
+            name: Request controls fixture
+            models:
+              - id: controlled
+                reasoningEfforts: ['low', 'high']
+                serviceTiers: ['default', 'priority']
+                textVerbosityLevels: ['low', 'medium', 'high']
+              - id: plain
+    - id: request-controls-driver
+      name: './request-controls-driver.mjs'

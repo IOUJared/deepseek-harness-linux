@@ -103,6 +103,7 @@ flowchart LR
   pkg_credentials["credentials"]
   svc_credentials["ctx.credentials<br/>Credential seam"]
   pkg_credentials_local["credentials-local"]
+  svc_codexAccounts["ctx.codexAccounts<br/>Managed native Codex accounts"]
   pkg_deepseek_account["deepseek-account"]
   svc_deepseekAccount["ctx.deepseekAccount<br/>DeepSeek account"]
   pkg_deepseek_account_platform["deepseek-account-platform"]
@@ -345,6 +346,7 @@ flowchart LR
   pkg_jobs_local --> svc_jobs
   pkg_llm --> svc_llm
   pkg_llm_deepseek --> svc_llm
+  pkg_llm_pi_ai --> svc_codexAccounts
   pkg_llm_pi_ai --> svc_llm
   pkg_llm_replay --> svc_llm
   pkg_lsp --> svc_lsp
@@ -606,6 +608,7 @@ flowchart LR
 | `ctx.settings` | `core` | [`settings`](../packages/settings/settings) | - | [`api-settings-controller`](../packages/api/settings-controller) | - | Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references. |
 | `ctx.subagentModelSelection` | `core` | [`tool-subagent`](../packages/subagent/tool-subagent) | - | [`tool-subagent`](../packages/subagent/tool-subagent) | - | Owns the default-off settings namespace that Agent-scoped delegation tools sample when composing a new top-level Session. |
 | `ctx.credentials` | `seam` | [`credentials`](../packages/credentials/credentials) | [`credentials-local`](../packages/credentials/credentials-local) | [`api-settings-controller`](../packages/api/settings-controller), [`llm-deepseek`](../packages/llm/llm-deepseek), [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | Configuration carries references to secrets; providers own the values. Consumers resolve per operation, so a rotated credential reaches the very next request; the settings controller exposes value-free views and write-only storage. |
+| `ctx.codexAccounts` | `seam` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | - | The provider owns the private grant vault and epoch-guarded account lifecycle; native Core consumes value-free descriptions and explicit mutations outside this repository package graph. |
 | `ctx.deepseekAccount` | `seam` | [`deepseek-account`](../packages/credentials/deepseek-account) | [`deepseek-account-platform`](../packages/credentials/deepseek-account-platform) | [`api-account-controller`](../packages/api/account-controller), [`llm-deepseek`](../packages/llm/llm-deepseek) | - | The Host owns browser authorization and local credentials; UI consumers receive state without tokens. |
 | `ctx.authorization` | `seam` | [`authorization`](../packages/credentials/authorization) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | Flows are registered by the plugin that knows how to obtain one credential and keyed by the record they write; the seam owns the conversation and the one-attempt-per-key lifecycle, never the protocol. |
 | `ctx.productAnalytics` | `service` | [`client-product-analytics`](../packages/client/product-analytics) | - | - | - | Accepts selected Desktop events, enriches available login identity, and observes live compaction under the live Host collection policy. |

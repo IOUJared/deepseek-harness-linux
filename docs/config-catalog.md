@@ -50,6 +50,10 @@ export interface Config {
   model: Volatile<string>
   /** Adapter-owned reasoning effort; omission follows the provider default. */
   reasoningEffort: Volatile<string | undefined>
+  /** Explicit default service tier; omission preserves provider behavior. */
+  serviceTier: Volatile<'default' | 'priority' | undefined>
+  /** Explicit default output detail; omission preserves provider behavior. */
+  textVerbosity: Volatile<'low' | 'medium' | 'high' | undefined>
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-agent-default-model -->
@@ -184,7 +188,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-gateway`
 
 - `inject`: `typert`
-- `source`: [`packages/api/gateway/src/index.ts:146`](../packages/api/gateway/src/index.ts)
+- `source`: [`packages/api/gateway/src/index.ts:147`](../packages/api/gateway/src/index.ts)
 
 ```ts config-catalog
 /** Gateway transport configuration. */
@@ -193,6 +197,14 @@ export interface Config {
   readonly websocketHeartbeatIntervalMs?: number
   /** Buffered uplink frame bytes one logical stream may hold before it fails with `gateway/uplink-overflow`. @default 262144 */
   readonly streamInboxBytes?: number
+  /** Queued JSON snapshots in the built-in source and each Client generation. @default 128 */
+  readonly remoteEventBufferItems?: number
+  /** UTF-8 JSON snapshot bytes in the built-in source and each Client generation. @default 262144 */
+  readonly remoteEventBufferBytes?: number
+  /** Pending scoped invocations retained for result or reconnection. @default 128 */
+  readonly remoteEventPendingItems?: number
+  /** UTF-8 serialized invocation-frame bytes retained until settlement. @default 262144 */
+  readonly remoteEventPendingBytes?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-api-gateway -->
@@ -222,7 +234,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-session-controller`
 
 - `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `workspaceRegistry`
-- `source`: [`packages/api/session-controller/src/index.ts:79`](../packages/api/session-controller/src/index.ts)
+- `source`: [`packages/api/session-controller/src/index.ts:81`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
 /** Session Controller deployment policy. */
@@ -1621,6 +1633,10 @@ export interface Config {
    * and registers them the moment a settings section supplies profiles.
    */
   providers: Volatile<Record<string, PiAiProviderProfile>>
+  /** Explicit managed-account activation; changing it remounts the plugin. */
+  nativeCodexAccounts: boolean
+  /** Required absolute, canonical private vault directory when managed accounts are enabled. */
+  nativeCodexAccountVault?: string
 }
 
 /** Configuration for one pi-ai provider route; the `providers` dict key IS the route. */
@@ -1885,7 +1901,7 @@ export type PiAiThinkingTokenBudgetField = NonNullable<OpenAICompletionsCompat['
 
 - `inject`: `llm`
 - `refs`: [`ModelModality`](../packages/llm/llm/src/index.ts) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · [`SystemPromptUpdate`](../packages/llm/llm/src/index.ts) · [`ToolUpdate`](../packages/llm/llm/src/index.ts)
-- `source`: [`packages/test-support/llm-replay/src/index.ts:1129`](../packages/test-support/llm-replay/src/index.ts)
+- `source`: [`packages/test-support/llm-replay/src/index.ts:1139`](../packages/test-support/llm-replay/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the {@link ReplayConfig} inputs, each defaulting to its `DSH_SNAPSHOT_*` env var in `apply`. */
@@ -1946,6 +1962,10 @@ export interface ReplayModelConfig {
   imageRequestTokens?: number
   /** Optional reasoning-effort ids the replay route accepts, in display order. */
   reasoningEfforts?: string[]
+  /** Explicit service tiers accepted by this replay-only exact model. */
+  serviceTiers?: ('default' | 'priority')[]
+  /** Explicit text-output detail levels accepted by this replay-only exact model. */
+  textVerbosityLevels?: ('low' | 'medium' | 'high')[]
   /**
    * Optional effort materialized when callers omit one; must appear in
    * {@link reasoningEfforts} or call resolution rejects the route.

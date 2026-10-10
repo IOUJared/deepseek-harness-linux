@@ -7,7 +7,7 @@
  */
 
 import type { GenerateOptions } from './types.ts'
-import type { ReasoningEffortId } from './brand.ts'
+import type { ReasoningEffortId, ServiceTier, TextVerbosity } from './brand.ts'
 
 /** Process-local identities of request objects assembled by dsh-agent-loop. */
 const AGENT_LOOP_REQUESTS = new WeakSet<GenerateOptions>()
@@ -24,6 +24,10 @@ export interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  /** Explicit tier; omission preserves provider behavior without materializing a default. */
+  serviceTier?: ServiceTier
+  /** Explicit output detail; omission preserves provider behavior. */
+  textVerbosity?: TextVerbosity
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -51,6 +55,8 @@ export function callConfigEquals(a: LlmCallConfig, b: LlmCallConfig): boolean {
     a.provider !== b.provider
     || a.model !== b.model
     || a.reasoningEffort !== b.reasoningEffort
+    || a.serviceTier !== b.serviceTier
+    || a.textVerbosity !== b.textVerbosity
     || a.temperature !== b.temperature
     || a.maxTokens !== b.maxTokens
   ) return false

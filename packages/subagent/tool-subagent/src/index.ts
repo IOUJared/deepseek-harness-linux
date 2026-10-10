@@ -14,7 +14,7 @@ import { scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -114,11 +114,15 @@ export const Config: z<Config> = z.object({
     provider: z.string(),
     model: z.string(),
     reasoningEffort: z.string().min(1) as z<ReturnType<typeof ReasoningEffortId>>,
+    serviceTier: z.union(['default', 'priority'] as const) as z<ServiceTier>,
+    textVerbosity: z.union(['low', 'medium', 'high'] as const) as z<TextVerbosity>,
     maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
   }).default(undefined as unknown as {
     provider: string
     model: string
     reasoningEffort: ReturnType<typeof ReasoningEffortId>
+    serviceTier: ServiceTier
+    textVerbosity: TextVerbosity
     maxTokens: number
   }),
   persona: z.string(),

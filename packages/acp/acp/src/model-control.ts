@@ -109,8 +109,10 @@ export class AcpModelControl {
         const state = await this.state(signal)
         const selected = state.choices.get(value)
         if (selected === undefined) throw new AcpModelConfigError(`unknown model option: ${value}`)
-        await this.resolveSelection(selected, signal)
-        this.selected = selected
+        const unchanged = selected.provider === current.provider && selected.model === current.model
+        const intended = unchanged ? current : selected
+        await this.resolveSelection(intended, signal)
+        this.selected = intended
       } else if (configId === REASONING_CONFIG_ID) {
         const info = await this.llm.resolveModelInfo(current.provider, current.model, signal)
         const providerDefault = value === PROVIDER_DEFAULT_REASONING_VALUE
@@ -121,9 +123,9 @@ export class AcpModelControl {
         ) {
           throw new AcpModelConfigError(`unknown reasoning effort for ${current.provider}/${current.model}: ${value}`)
         }
+        const { reasoningEffort: _previousEffort, ...routeSelection } = current
         this.selected = await this.resolveSelection({
-          provider: current.provider,
-          model: current.model,
+          ...routeSelection,
           ...providerDefault ? {} : { reasoningEffort: ReasoningEffortId(value) },
         }, signal)
       } else {
@@ -227,6 +229,8 @@ export class AcpModelControl {
       provider: resolved.provider,
       model: resolved.model,
       ...resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort },
+      ...resolved.serviceTier === undefined ? {} : { serviceTier: resolved.serviceTier },
+      ...resolved.textVerbosity === undefined ? {} : { textVerbosity: resolved.textVerbosity },
     }
   }
 }

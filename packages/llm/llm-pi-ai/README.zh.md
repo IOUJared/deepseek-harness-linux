@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当组合需要通过 pi-ai 的提供方目录、或通过 pi-ai 已安装目录未描述的网关路由模型请求时挂载本插件。`providers` 字典就是整个配置面：每个键都是请求用 `GenerateOptions.provider` 选择的提供方路由名。
+当组合需要通过 pi-ai 的提供方目录、或通过 pi-ai 已安装目录未描述的网关路由模型请求时挂载本插件。`providers` 字典配置路由：每个键都是请求用 `GenerateOptions.provider` 选择的提供方路由名。
 
 适配器接受 LLM 服务的[仅供请求使用的 user 输入](../llm/README.zh.md#use-this-package)，并可将其与持久历史混用。user 身份与来源不会进入 pi-ai 内容；assistant 回放元数据和工具调用关联仍由持久消息携带。
 
@@ -94,6 +94,18 @@ kind: "package-reference"
 
 pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新；退出登录即删除存储记录。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。
 
+### 托管原生 Codex 账户
+
+设置 `nativeCodexAccounts: true`，并提供显式绝对目录 `nativeCodexAccountVault`。根作用域、引用计数的仅限 Host 服务 `codexAccounts` 提供 `describe`、`beginLogin`、`cancelLogin`、`select`、`signOut` 和 `signOutAll`，没有 Remote 方法。默认 profile 保持旧认证。旧 `llm-pi-ai/openai-codex` grant 仅报告为未采纳，绝不导入或修改。托管模式移除其旧授权流程，其他提供方流程不变。
+
+规范 vault 使用生命周期 POSIX flock、私有目录／文件权限，以及同时保存不透明 SDK grant 和非秘密元数据的 fsync 版本化提交。恢复时校验引用的 grant，准入前清理崩溃遗留且未登记的 staging grant。移除已提交账户时，在同一个元数据提交中删除其 grant，但不删除另一项进行中的 Add。失去所有权或磁盘提交结果不确定时，关闭准入并中止绑定工作；必须重新打开。最后一个适配器等待登录、流以及底层刷新／存储操作排空后，才释放 vault。兼容的模块热重载共享该根 owner；不同应用绝不共享它。
+
+Add 创建随机账户 UUID，不自动选中；其结果在持久 Add 提交时冻结 `{ account, epoch }`。原生调用方在 OAuth 前与 Add 提交、切换或本地退出时传入 `expectedEpoch`，过期命令以 `CODEX_EPOCH_CONFLICT` 失败。标签含 1–128 个可打印 Unicode 字符，至多 512 个 UTF-8 字节；email 与 plan 保持 null。切换先退役旧 epoch，再排空并提交。退出绝不选择另一账户。取消登录等待晚到 OAuth 和 staging 清理，但不撤销已经提交的变更；本地退出不等于签发方吊销。
+
+未选择账户时仍可查询目录元数据，但目录不能证明账户资格。生成以 `NO_CODEX_ACCOUNT` 失败，绝不回退至旧认证、ambient 或其他账户。托管分派要求目录拥有的 Codex 协议与官方 ChatGPT 端点；在访问私有 grant 前拒绝凭据和协议／端点覆盖。预备调用保留确切存储、epoch 与退役信号；SDK 会话缓存按账户和 epoch 隔离。
+
+私有观察器 token 投影使用公共 `Models.getAuth` 和 pi-ai 保存的签发方账户 id；强制刷新使用相同账户键队列，并拒绝签发方身份变化。token 和签发方 id 不进入 DTO、日志或 Remote 服务，也不从 JWT 推断身份。不启用观察器进程或实验性 token 登录 RPC。
+
 ### 解析模型目录
 
 profile 的 `models` 列表会替换而非扩展路由的已安装目录；每个条目从同 id 已安装模型取未设置字段的默认值，因此把路由收窄到两个模型、修正一个容量或添加比已安装目录更新的模型都是一行编辑。`modelOverrides` 无需该代价即可重塑个别已安装目录模型——修正一个模型，保留其余三十七个——当它与 `models` 列表并存、位于手工声明路由上、或点名目录未描述的模型时会被拒绝，因为静默不变的模型会成为别人日后寻找的拼写错误。
@@ -104,9 +116,21 @@ profile 的 `models` 列表会替换而非扩展路由的已安装目录；每�
 
 对于自托管 Chat Completions 端点，`thinkingTokenBudgetField` 选择推理预算参数，`vllmPriority` 在服务端启用优先级调度时设置整数调度优先级。模板参数接受 `$var: thinking.budget`。`openai-responses` 网关可设置 `supportsMaxOutputTokens: false` 来省略 `max_output_tokens`；Azure 与 Codex 传输会忽略这个共享兼容字段。这些控制均需显式启用；目录拥有的 Anthropic effort 和回退能力不是可配置开关。
 
+### 请求速度与输出详略
+
+`GenerateOptions.serviceTier` 接受 `default`（Standard）或 `priority`（Fast · premium）；`textVerbosity` 接受 `low`、`medium` 或 `high`。精确模型元数据对 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol` 和 `gpt-6-luna` 提供这些选项，并要求通过 `https://api.openai.com/v1` 的 `openai-responses` 或官方 ChatGPT 后端上由目录拥有的 Codex 协议发送。未知模型、其他协议及自定义网关不暴露这些控件，并在解析凭据或提供方 I/O 前拒绝显式值。这些控件不会向已安装目录添加模型；较新 id 仍需显式 `models` 条目。官方 API 路由还提供已核实的 `gpt-5.2` 与 `gpt-5.4` 控件；[OpenAI Fast 价格](https://developers.openai.com/api/docs/pricing.md#fast-pricing-data) 及 [GPT-5.2](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.2.md)／[GPT-5.4](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.4.md#verbosity) 指南说明这些选项，而 [ChatGPT 登录模型退役说明](https://learn.chatgpt.com/docs/models.md#deprecated-codex-models) 将它们排除在 Codex 能力之外。
+
+省略时保留现有 SDK 请求：不注入 tier，Codex 保留既有 low 详略。描述性默认值不会实体化。显式 Standard 发送 `service_tier: "default"`，Fast 发送 `"priority"`；输出详略合并 `text.verbosity`，不替换文本格式字段。适配器在异步凭据解析前捕获显式值，并通过 pi-ai 载荷回调转发，因为 simple options 会丢弃提供方专属的具名字段。
+
+[OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode.md) 支持 priority 请求拼写，说明较高 API 价格及可能采用 Standard 处理；[Codex 速度](https://learn.chatgpt.com/docs/agent-configuration/speed.md) 说明较高订阅用量或积分收费，以及套餐、工作区、客户端与推出进度的限制。能力元数据描述请求支持，不代表账户资格或实际速度。[GPT-5.5 指南](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5.md) 与 [GPT-6 部署清单](https://developers.openai.com/api/docs/guides/deployment-checklist.md#set-up-textverbosity) 说明输出详略控制；它独立于推理 effort，也不是 token 上限。区域处理限制仍适用，包括 EU 数据驻留时不能使用 GPT-6 Fast mode。
+
 ### 运行时更改配置
 
 每次操作捕获当前 `providers` Config 引用。新增或修改的 provider 配置在表单持久化前验证；未更改的目录故障仍可编辑。路由集合或重试策略变化时原子更新注册；如果其他适配器已拥有所请求的路由，则保留先前路由。
+
+### 释放会话资源
+
+会话 ID 让 pi-ai 传输缓存跨请求复用。插件销毁时调用 `PiAiAdapter.dispose()`，仅释放自己拥有的 ID；与其他适配器共享的 ID 会保留到最后一个所有者销毁。销毁立即拒绝新的流式请求，并中止已进入 SDK 的请求，等待 SDK 终止结果及迭代器结束后再释放 ID，包括暂停在已产出分片上的迭代器。尚未进入 SDK 的凭据或图片准备不会拖延销毁，也不能在销毁后分派。重复销毁共享同一任务及其结果；迭代器结束和 ID 清理的失败会在尝试全部 ID 后聚合报告。销毁依赖 SDK 响应取消并产生终止结果，没有独立截止时间。SDK 同步清除空闲计时器并发起 socket 关闭，但不等待关闭确认。没有非空会话 ID 的请求不会触发全局清理。
 
 ### 从端点发现模型
 
@@ -132,7 +156,7 @@ Config 更新严格验证发生变化的 provider。初始加载将已存储的�
 
 ### 设计理念
 
-适配器建立在不可变快照与按操作解析之上。每个操作都会在第一次 `await` 前捕获整个快照——profile 加一个持有每条路由所构建 `Provider` 的 `createModels()` 集合——配置变更会构建新集合而非修改使用中的集合，因此在一个配置下开始的请求绝不会在另一个配置下结束。路由自己的凭据引用经 harness seam 解析，并以请求 `apiKey` 选项传入，pi-ai 将其视为优先级最高的 auth 覆盖——这正是明确失败引用语义的所在。该覆盖未覆盖的一切都经集合自身的 auth 到达 pi-ai：凭据存储持有登录写入、刷新轮换的记录（以 `llm-pi-ai/<provider id>` 寻址），auth context 回答提供方解析时提出的 ambient 问题。两者跨快照保持稳定，因此配置变更重建集合时不会忘记谁已登录。运行时 import 使用 pi-ai 的 provider、API 与 utility 入口；`src/models.ts` 提供本适配器所需的少量 model helper，而不会求值 pi-ai 聚合入口。
+适配器建立在不可变快照与按操作解析之上。每个操作都会在第一次 `await` 前捕获整个快照——profile 加一个持有每条路由所构建 `Provider` 的 `createModels()` 集合——配置变更会构建新集合而非修改使用中的集合，因此在一个配置下开始的请求绝不会在另一个配置下结束。路由自己的凭据引用经 harness seam 解析，并以请求 `apiKey` 选项传入，pi-ai 将其视为优先级最高的 auth 覆盖——这正是明确失败引用语义的所在。该覆盖未覆盖的一切都经集合自身的 auth 到达 pi-ai：凭据存储持有登录写入、刷新轮换的记录（以 `llm-pi-ai/<provider id>` 寻址），auth context 回答提供方解析时提出的 ambient 问题。两者跨快照保持稳定，因此配置变更重建集合时不会忘记谁已登录。Model helper 使用 pi-ai 的 provider、API 与 utility 入口；`src/models.ts` 提供本适配器所需的少量 helper。会话清理使用 pi-ai 的公共聚合导出。
 
 ### 源码地图
 
@@ -144,6 +168,7 @@ Config 更新严格验证发生变化的 provider。初始加载将已存储的�
 | [`src/config.ts`](src/config.ts) | Profile schema、解析与可服务性校验 |
 | [`src/catalog.ts`](src/catalog.ts) | 已安装目录集成与漂移门禁 |
 | [`src/models.ts`](src/models.ts) | 基于 pi-ai 窄入口的 model collection、静态 provider 与 reasoning level |
+| [`src/request-controls.ts`](src/request-controls.ts) | 精确路由速度／详略元数据、I/O 前准入与冻结载荷转发 |
 | [`src/provider.ts`](src/provider.ts) | 受支持协议表与提供方构建 |
 | [`src/context.ts`](src/context.ts) | Harness 到 pi-ai 的上下文转换、图片处理、回放恢复 |
 | [`src/stream.ts`](src/stream.ts) | 把 pi-ai 事件转换为 harness `StreamChunk` 值 |
@@ -187,7 +212,7 @@ Config 更新严格验证发生变化的 provider。初始加载将已存储的�
 
 #### Token 影响
 
-提供方分词决定精确输入。保留图片会添加稳定的附件与坐标描述符；卸载占位符会替代省略图片的视觉 token。回放元数据可能让原生 API 复用提供方侧状态。
+提供方分词决定精确输入。保留图片会添加稳定的附件与坐标描述符；卸载占位符会替代省略图片的视觉 token。回放元数据可能让原生 API 复用提供方侧状态。输出详略可以改变生成长度；Fast 请求可能提高收费或订阅用量，但不改写提示词。
 
 #### KV Cache 影响
 
@@ -214,6 +239,7 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 
 这些限制说明适配器在哪里停止、由未来工作接续。它们是当前包约束，不是通用 pi-ai 对比或任务积压。
 
+- **托管账户要求显式启用 POSIX vault**——真实 OAuth、账户资格和付费生成需要单独验证；无密钥 Loader 测试使用合成 OAuth／网络响应。未实现旧认证迁移、签发方 token 吊销和官方同账户配额观察器。实验性观察器 token 传输要求单独、可见的许可；不伪造配额或身份。
 - **`maxRequestImageBytes` 只计算 base64 图片载荷**，文本、工具、描述符与 JSON 结构在该上限之外，因此它必须留有余量地低于网关请求体上限。
 - **登录只存在于发起它的进程中**——授权尝试不持久，因此登录中途刷新页面会放弃它，用户需要重新开始。退出登录是对已存储记录执行 `deleteRecord`，只在本地忘记它，不会告知签发方。
 - **提供方原生发现经本插件的 ambient context 回答**——不点名凭据的路由交由目录提供方自身解析，它会询问环境值（`AZURE_OPENAI_API_KEY`、`AWS_PROFILE` 及各提供方自有集合）与本地凭据文件。两个问题都在这里得到回答：凭据 seam 先于进程环境被查询，文件存在性则针对宿主进程的文件系统以 `~` 展开后检查。它做不到的是*读取*凭据文件内容——自行解析 `~/.aws/credentials` 的提供方会直接读取，不经该 seam。

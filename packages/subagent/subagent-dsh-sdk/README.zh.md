@@ -53,6 +53,8 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-subagent-dsh-sdk)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
+显式的 `serviceTier`／`textVerbosity` 覆盖值会传入嵌套 SDK 握手。省略时，仅在确切提供方／模型相同的情况下继承父级最新已记录控制；独立子路由不接收这两个值。这些字段不是面向模型的工具参数。
+
 请求 `agentOptions` 会分别覆盖 `provider`、`model` 与 `maxTokens`。`reasoningEffort` 没有提供方实例默认值：请求省略时保持缺省，由所选子模型解析自身默认值。面向模型的 subagent 工具可在每次调用时选择提供方／模型／推理强度；`maxTokens` 仍由工具配置或本提供方默认值在部署侧控制。
 
 ```yaml

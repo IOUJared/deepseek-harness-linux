@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import {
   DeepSeekHarness,
   HarnessClient,
@@ -282,6 +282,21 @@ describe('DeepSeekHarness', () => {
       reasoningEffort: 'max',
       maxTokens: 4096,
     }])
+  })
+
+  it.each(['default', 'priority'] as const)('sends explicit %s tier and verbosity without materializing omitted controls', async (tier) => {
+    const dir = await tempDir('sdk-client-controls-')
+    const recordFile = join(dir, 'init.jsonl')
+    const harness = createProcessDeepSeekHarness(fakeLaunch({ FAKE_RECORD_INIT: recordFile }), {
+      cwd: dir, provider: 'custom-provider', model: 'custom-model',
+      serviceTier: ServiceTier(tier), textVerbosity: TextVerbosity('low'),
+    })
+    cleanups.push(() => harness.close())
+    await harness.start()
+    await harness.close()
+    expect(JSON.parse(await readFile(recordFile, 'utf8'))).toEqual({
+      cwd: dir, provider: 'custom-provider', model: 'custom-model', serviceTier: tier, textVerbosity: 'low',
+    })
   })
 
   it('resolves a relative launch cwd to an absolute workspace before the handshake', async () => {

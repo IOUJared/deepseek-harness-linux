@@ -1,6 +1,8 @@
 /** Session commands whose activation policy is explicit at each Remote method. */
 
 import { modelAvailable } from './catalog.ts'
+import { PromptAdmissionLedger, assertPromptFingerprint } from './prompt-admission.ts'
+import type { PromptAdmissionClaim } from './prompt-admission.ts'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -12,7 +14,7 @@ import type {
 import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/types'
 import type {} from '@deepseek-ai/dsh-client-file-upload'
 import {
-  ReasoningEffortId, assistantStreamChunks, createUserMessage, freezeMessage,
+  ReasoningEffortId, ServiceTier, TextVerbosity, assistantStreamChunks, createUserMessage, freezeMessage,
 } from '@deepseek-ai/dsh-llm'
 import type { MessageSource } from '@deepseek-ai/dsh-llm'
 import { buildForkSeed } from '@deepseek-ai/dsh-session/fork'
@@ -45,6 +47,8 @@ import type {
   SessionForkValue,
   SessionPromptRequest,
   SessionPromptValue,
+  SessionPromptAdmissionRequest,
+  SessionPromptAdmissionValue,
   SessionRenameRequest,
   SessionRenameValue,
   SessionSelectModelRequest,
@@ -86,6 +90,8 @@ function latestCompletedPrefixBoundary(events: readonly SessionEvent[]): Session
 
 /** Implements Session business commands delegated by the Session Controller Remote service. */
 export class SessionCommandController {
+  private readonly admissions = new PromptAdmissionLedger(() => this.ctx.fiber.uid !== null && this.ctx.root.fiber.uid !== null)
+
   /**
    * @param ctx - Host context carrying Agent, model, attachment, title, and Workspace services.
    * @param agents - sole owner of create, resume, and Session-local model selection.
@@ -95,7 +101,24 @@ export class SessionCommandController {
     private readonly ctx: Context,
     private readonly agents: ApiSessionAgentController,
     private readonly defaultCwd: string,
-  ) {}
+  ) {
+    ctx.on('session/event', (session, event) => {
+      const messages = event.type === 'user/message' ? [event.data]
+        : event.type === 'agent/inbox/spliced' ? event.data.inserted : []
+      for (const message of messages) {
+        const source = message.source
+        if (source.kind !== 'user' || !('rpcId' in source)) continue
+        this.admissions.journal(session.id, source.rpcId, promptRecordStatus({
+          message, seq: event.seq, phase: event.type === 'user/message' ? 'recorded' : 'admitted',
+        }))
+      }
+    })
+    ctx.on('agent/inbox/claimed', ({ agent, message }) => {
+      const source = message.source
+      if (source.kind === 'user' && 'rpcId' in source) this.admissions.claimed(agent.id, source.rpcId)
+    })
+    ctx.effect(() => () => this.admissions.dispose(), 'session-controller.prompt-admissions')
+  }
 
   /**
    * Create or idempotently adopt one ordinary Session.
@@ -159,6 +182,8 @@ export class SessionCommandController {
           ...(request.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: ReasoningEffortId(request.reasoningEffort) }),
+          ...(request.serviceTier === undefined ? {} : { serviceTier: ServiceTier(request.serviceTier) }),
+          ...(request.textVerbosity === undefined ? {} : { textVerbosity: TextVerbosity(request.textVerbosity) }),
         })
         const selected: AgentModelSelection = {
           provider: resolved.provider,
@@ -166,6 +191,8 @@ export class SessionCommandController {
           ...(resolved.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: resolved.reasoningEffort }),
+          ...(resolved.serviceTier === undefined ? {} : { serviceTier: resolved.serviceTier }),
+          ...(resolved.textVerbosity === undefined ? {} : { textVerbosity: resolved.textVerbosity }),
         }
         this.agents.selectForNextRequest(agent, selected)
         void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
@@ -308,7 +335,11 @@ export class SessionCommandController {
    * @param request - Session identity, prompt content, source metadata, and delivery mode.
    * @returns acknowledgement that the Agent accepted the prompt.
    */
-  async prompt(request: SessionPromptRequest): Promise<SessionPromptValue> {
+  prompt(request: SessionPromptRequest): Promise<SessionPromptValue> {
+    return this.admissions.admit(request, (snapshot, claim) => this.admitPrompt(snapshot, claim))
+  }
+
+  private async admitPrompt(request: SessionPromptRequest, claim: PromptAdmissionClaim): Promise<SessionPromptValue> {
     if (!hasPromptContent(request.content)) {
       throw new RemoteError(
         'gateway/bad-request',
@@ -327,15 +358,31 @@ export class SessionCommandController {
       )
     }
     const agent = await this.resolveAgent(request.sessionId)
-    if (hasPromptRequest(agent, request.requestId)) return { accepted: true }
+    claim.assertOpen()
+    // Historical inbox insertions remain evidence after a claim removes the pending occurrence.
+    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session journal evidence read; migration deferred.
+    const recorded = promptRecords(agent.session.snapshotEvents(), request.requestId)
+    const pending = [...agent.inbox.nextTurn, ...agent.inbox.nextStep].filter(message => promptMatches(message, request.requestId))
+    for (const message of [...recorded.map(record => record.message), ...pending]) {
+      const source = message.source
+      if (source.kind === 'user' && 'rpcId' in source) assertPromptFingerprint(source.promptFingerprint, claim.fingerprint, request)
+    }
+    const record = recorded.find(candidate => candidate.phase === 'recorded') ?? recorded[0]
+    if (record !== undefined) {
+      this.admissions.journal(request.sessionId, request.requestId, promptRecordStatus(record))
+      return { accepted: true }
+    }
+    if (pending.length > 0) return { accepted: true }
     const source: MessageSource = {
       kind: 'user',
       rpcId: request.requestId,
+      promptFingerprint: claim.fingerprint,
       ...(clientTimeZone === undefined ? {} : { clientTimeZone }),
     }
     const hasImage = request.content.some(part => part.type === 'image')
     const admit = async (): Promise<SessionPromptValue> => {
       try {
+        claim.assertOpen()
         if (hasImage) {
           const current = this.agents.selectionFor(agent).current
           const model = await this.ctx.llm.resolveModelInfo(current.provider, current.model)
@@ -352,6 +399,7 @@ export class SessionCommandController {
           receiptId => this.ctx.fileUploads.resolve(agent, receiptId),
         )
         const content = await this.ctx.attachments.admitPromptContent(admission.content)
+        claim.assertOpen()
         const message: UserMessage = createUserMessage({ content, source })
         if (this.ctx.agents.get(agent.id) !== agent) {
           throw new RemoteError(
@@ -361,6 +409,7 @@ export class SessionCommandController {
           )
         }
         using binding = this.ctx.fileUploads.bindPrompt(agent, admission.receiptIds, request.requestId)
+        claim.dispatch()
         if (request.mode === 'steer') agent.steer(message)
         else agent.followup(message)
         binding.commit()
@@ -369,11 +418,40 @@ export class SessionCommandController {
         if (error instanceof AttachmentError) {
           throw new RemoteError('session/attachment-invalid', error.message, { reason: error.code })
         }
-        throw new RemoteError('session/agent-busy', 'prompt rejected', { reason: String(error) })
+        throw new RemoteError('session/agent-busy', 'prompt rejected', { reason: 'PROMPT_ADMISSION_FAILED' })
       }
       return { accepted: true }
     }
     return hasImage ? this.agents.serializeImageAdmission(agent, admit) : admit()
+  }
+
+  /** Read positive admission evidence without activating an Agent or changing any queue.
+   * @param request - original Session and client request identities.
+   * @param signal - cancellation for the cold journal observation only.
+   * @returns positive admission evidence, a retained pre-dispatch rejection, or unknown.
+   */
+  async promptAdmission(request: SessionPromptAdmissionRequest, signal?: AbortSignal): Promise<SessionPromptAdmissionValue> {
+    signal?.throwIfAborted()
+    const memory = this.admissions.status(request.sessionId, request.requestId)
+    const agent = this.ctx.get('agents')?.get(request.sessionId)
+    const pending = [...agent?.inbox.nextTurn ?? [], ...agent?.inbox.nextStep ?? []]
+      .find(message => promptMatches(message, request.requestId))
+    if (pending !== undefined) return { state: 'accepted', evidence: 'inbox', phase: 'queued', ...promptMessageId(pending) }
+    if (this.ctx.get('sessions') === undefined || this.ctx.get('sessionQuery') === undefined) return memory ?? { state: 'unknown' }
+    let state: SessionReadState
+    try { state = await this.readSessionState(request.sessionId, signal) }
+    catch (error) {
+      if (signal?.aborted) throw error
+      if (error instanceof ApiSessionNotFound) return memory ?? { state: 'unknown' }
+      throw new RemoteError('gateway/internal', 'Prompt admission evidence is unavailable.', {})
+    }
+    signal?.throwIfAborted()
+    const records = promptRecords(state.events, request.requestId)
+    const recorded = records.find(record => record.phase === 'recorded')
+    if (recorded !== undefined) return promptRecordStatus(recorded)
+    if (memory?.state === 'accepted' && memory.phase === 'claimed') return memory
+    const inserted = records[0]
+    return inserted === undefined ? memory ?? { state: 'unknown' } : promptRecordStatus(inserted)
   }
 
   private async requireModel(selection: Pick<AgentModelSelection, 'provider' | 'model'>): Promise<void> {
@@ -555,13 +633,13 @@ export class SessionCommandController {
     throw new RemoteError('gateway/internal', `failed to create session "${sessionId}": ${String(error)}`, {})
   }
 
-  private async readSessionState(sessionId: SessionId): Promise<SessionReadState> {
+  private async readSessionState(sessionId: SessionId, signal?: AbortSignal): Promise<SessionReadState> {
     const attached = this.ctx.sessions.get(sessionId)
     if (attached !== undefined) {
       // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       return { id: attached.id, header: attached.header, events: attached.snapshotEvents() }
     }
-    const inspected = await inspectApiSession(this.ctx, sessionId)
+    const inspected = await inspectApiSession(this.ctx, sessionId, signal)
     return { id: inspected.meta.id, header: inspected.meta, events: inspected.events }
   }
 
@@ -599,18 +677,38 @@ function resolvePromptFileReceipts(
   return { content: resolved, receiptIds: [...receiptIds] }
 }
 
-function hasPromptRequest(agent: Agent, requestId: SessionRequestId): boolean {
-  const matches = (message: UserMessage): boolean => {
-    const source = message.source
-    return source.kind === 'user' && 'rpcId' in source && source.rpcId === requestId
+function promptMatches(message: UserMessage, requestId: SessionRequestId): boolean {
+  const source = message.source
+  return source.kind === 'user' && 'rpcId' in source && source.rpcId === requestId
+}
+
+interface PromptJournalRecord {
+  readonly message: UserMessage
+  readonly seq: number
+  readonly phase: 'admitted' | 'recorded'
+}
+
+function promptRecords(events: readonly SessionEvent[], requestId: SessionRequestId): PromptJournalRecord[] {
+  const records: PromptJournalRecord[] = []
+  for (const event of events) {
+    // Other event types do not establish a prompt's original inbox admission.
+    const messages = event.type === 'user/message' ? [event.data]
+      : event.type === 'agent/inbox/spliced' ? event.data.inserted : []
+    for (const message of messages) {
+      if (promptMatches(message, requestId)) records.push({ message, seq: event.seq,
+        phase: event.type === 'user/message' ? 'recorded' : 'admitted' })
+    }
   }
-  if (agent.inbox.nextTurn.some(matches) || agent.inbox.nextStep.some(matches)) return true
-  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-  return agent.session.snapshotEvents().some((event) => {
-    if (event.type !== 'user/message') return false
-    const source = event.data.source
-    return source.kind === 'user' && 'rpcId' in source && source.rpcId === requestId
-  })
+  return records
+}
+
+function promptMessageId(message: UserMessage): { readonly messageId?: UserMessage['id'] } {
+  return message.id.length > 0 && message.id.length <= 128 && !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(message.id) ? { messageId: message.id } : {}
+}
+
+function promptRecordStatus(record: PromptJournalRecord): Extract<SessionPromptAdmissionValue, { state: 'accepted' }> {
+  return { state: 'accepted', evidence: 'journal', phase: record.phase, ...promptMessageId(record.message),
+    ...Number.isSafeInteger(record.seq) && record.seq >= 0 ? { seq: record.seq } : {} }
 }
 function imageBlockIn(
   content: unknown,

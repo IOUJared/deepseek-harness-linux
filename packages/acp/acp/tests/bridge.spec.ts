@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
-import { ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { ServiceTier, TextVerbosity, ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceRevision, type SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { makeBridgeHarness, textResponse, type BridgeHarness } from './harness.ts'
 import { startHttpMcpFixture } from '../../../mcp/mcp-client/tests/http-fixture.ts'
+import { AcpModelControl } from '../src/model-control.ts'
 
 /** Wrap a bare header as the snapshot shape `SessionPersistence.list` now returns. */
 function snapshotOf(header: SessionHeader): SessionPersistenceSnapshot {
@@ -330,6 +331,34 @@ describe('automation-only ACP bridge', () => {
 
     expect(resumed.configOptions?.find(option => option.id === 'reasoning_effort')).toMatchObject({
       currentValue: 'low',
+    })
+  })
+
+  it('restores explicit request controls and retains them across an effort change', async () => {
+    harness = await makeBridgeHarness({ script: [textResponse('persisted controls'), textResponse('restored controls')] })
+    const resolve = harness.adapter.resolveModel.bind(harness.adapter)
+    vi.spyOn(harness.adapter, 'resolveModel').mockImplementation(async (...args) => ({
+      ...await resolve(...args),
+      serviceTier: { tiers: [{ id: ServiceTier('priority'), name: 'Priority' }] },
+      textVerbosity: { levels: [{ id: TextVerbosity('high'), name: 'High' }] },
+    }))
+    const install = AcpModelControl.prototype.install
+    vi.spyOn(AcpModelControl.prototype, 'install').mockImplementationOnce(function (this: AcpModelControl, agentCtx) {
+      this.selection.current = {
+        provider: 'mock', model: 'mock', serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high'),
+      }
+      install.call(this, agentCtx)
+    })
+    await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    const created = await harness.client.newSession({ cwd: process.cwd(), mcpServers: [] })
+    await harness.client.prompt({ sessionId: created.sessionId, prompt: [{ type: 'text', text: 'persist controls' }] })
+    await harness.client.closeSession({ sessionId: created.sessionId })
+    await harness.client.resumeSession({ sessionId: created.sessionId, cwd: process.cwd() })
+    await harness.client.setSessionConfigOption({ sessionId: created.sessionId, configId: 'reasoning_effort', value: 'low' })
+    await harness.client.prompt({ sessionId: created.sessionId, prompt: [{ type: 'text', text: 'continue' }] })
+    expect(harness.adapter.requests).toHaveLength(2)
+    expect(harness.adapter.requests.at(-1)).toMatchObject({
+      provider: 'mock', model: 'mock', reasoningEffort: 'low', serviceTier: 'priority', textVerbosity: 'high',
     })
   })
 

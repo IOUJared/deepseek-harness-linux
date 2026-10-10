@@ -12,7 +12,7 @@ import {
   type ConnectionRpcAttachment,
   type ConnectionRpcHandler,
 } from '@deepseek-ai/dsh-client-connection'
-import { Deque } from '@deepseek-ai/dsh-deque'
+import { EventBuffer, RemoteEventSourceBuffer, assertRemoteEventFrame, assertRemoteEventName, encodeEvent, eventBufferOverflow, type EncodedEvent, type EventBufferLimits } from './event-buffer.ts'
 import type { WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import type {} from '@deepseek-ai/dsh-cmdline'
@@ -20,7 +20,6 @@ import z from '@deepseek-ai/schemastery'
 export type { TypertGatewayFaultDetails } from './remote-error-codes.ts'
 import {
   RemoteError,
-  isRemoteJsonValue,
   remoteErrorOf,
   remoteMethods,
   type InvocationDescriptor,
@@ -70,6 +69,7 @@ export type {
   TypertGatewayErrorCode,
   TypertGatewayWireStream,
   TypertRemoteEventContext,
+  TypertRemoteEventBuffer,
   TypertRemoteEventDispatch,
   TypertRemoteEventFrame,
   TypertRemoteEventInvocation,
@@ -119,13 +119,14 @@ interface RemoteEventClient {
   readonly id: RemoteEventClientId
   readonly queue: RemoteEventQueue
   readonly signal: AbortSignal
+  readonly releaseSignal: () => void
   readonly deliveries: Map<RemoteEventId, PendingRemoteEvent>
 }
 
 interface PendingRemoteEvent {
   readonly id: RemoteEventId
-  readonly source: TypertRemoteEventInvocation
-  readonly frame: RemoteEventInvocationFrame
+  readonly source: Pick<TypertRemoteEventInvocation, 'resolve' | 'reject'>
+  readonly frame: EncodedEvent<undefined>
   readonly deliveries: Set<RemoteEventClient>
   releaseContext: () => void
   releaseSignal: () => void
@@ -148,11 +149,23 @@ export interface Config {
   readonly websocketHeartbeatIntervalMs?: number
   /** Buffered uplink frame bytes one logical stream may hold before it fails with `gateway/uplink-overflow`. @default 262144 */
   readonly streamInboxBytes?: number
+  /** Queued JSON snapshots in the built-in source and each Client generation. @default 128 */
+  readonly remoteEventBufferItems?: number
+  /** UTF-8 JSON snapshot bytes in the built-in source and each Client generation. @default 262144 */
+  readonly remoteEventBufferBytes?: number
+  /** Pending scoped invocations retained for result or reconnection. @default 128 */
+  readonly remoteEventPendingItems?: number
+  /** UTF-8 serialized invocation-frame bytes retained until settlement. @default 262144 */
+  readonly remoteEventPendingBytes?: number
 }
 
 interface ResolvedConfig extends Config {
   readonly websocketHeartbeatIntervalMs: number
   readonly streamInboxBytes: number
+  readonly remoteEventBufferItems: number
+  readonly remoteEventBufferBytes: number
+  readonly remoteEventPendingItems: number
+  readonly remoteEventPendingBytes: number
 }
 
 /**
@@ -202,6 +215,10 @@ export class TypertGatewayService extends Service implements TypertGateway {
     websocketHeartbeatIntervalMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS)
       .default(DEFAULT_WEBSOCKET_HEARTBEAT_INTERVAL_MS),
     streamInboxBytes: z.number().step(1).min(1).default(DEFAULT_STREAM_INBOX_BYTES),
+    remoteEventBufferItems: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(128),
+    remoteEventBufferBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_STREAM_INBOX_BYTES),
+    remoteEventPendingItems: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(128),
+    remoteEventPendingBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_STREAM_INBOX_BYTES),
   })
 
   /** Carrier adapter shared by the WebSocket mux and local Host transports. */
@@ -216,6 +233,9 @@ export class TypertGatewayService extends Service implements TypertGateway {
   private remoteEvents: RegisteredRemoteEventSource | undefined
   private readonly remoteEventClients = new Map<RemoteEventClientId, RemoteEventClient>()
   private readonly pendingRemoteEvents = new Map<RemoteEventId, PendingRemoteEvent>()
+  private readonly eventBufferLimits: EventBufferLimits
+  private readonly pendingEventLimits: EventBufferLimits
+  private pendingEventBytes = 0
 
   /**
    * Register the Gateway against the active Typert registry.
@@ -227,6 +247,8 @@ export class TypertGatewayService extends Service implements TypertGateway {
   constructor(ctx: Context, config: Config) {
     super(ctx, 'typertGateway')
     const resolved = config as ResolvedConfig
+    this.eventBufferLimits = { items: resolved.remoteEventBufferItems, bytes: resolved.remoteEventBufferBytes }
+    this.pendingEventLimits = { items: resolved.remoteEventPendingItems, bytes: resolved.remoteEventPendingBytes }
     ctx.on('internal/service', () => {
       this.srcClaims = undefined
     })
@@ -302,10 +324,15 @@ export class TypertGatewayService extends Service implements TypertGateway {
       throw new Error('typert gateway: forwarded Remote event source is already registered')
     }
     const lifetime = new AbortController()
-    const stream = source(lifetime.signal)
+    let stream: AsyncIterable<TypertRemoteEventDispatch>
+    try { stream = source(lifetime.signal, new RemoteEventSourceBuffer(lifetime.signal, this.eventBufferLimits)) }
+    catch (error) {
+      lifetime.abort(error)
+      throw error
+    }
     const done = this.consumeRemoteEvents(stream, lifetime.signal).catch((error: unknown) => {
       if (this.remoteEvents?.lifetime !== lifetime || lifetime.signal.aborted) return
-      this.closeRemoteEvents(error)
+      this.closeRemoteEvents(error, true)
       this.remoteEvents = undefined
       lifetime.abort(error)
     })
@@ -503,18 +530,28 @@ export class TypertGatewayService extends Service implements TypertGateway {
     const lifetime = AbortSignal.any([signal, registration.lifetime.signal])
     let clientId = randomUUID() as RemoteEventClientId
     while (this.remoteEventClients.has(clientId)) clientId = randomUUID() as RemoteEventClientId
+    const abort = (): void => { this.removeRemoteEventClient(client) }
     const client: RemoteEventClient = {
       id: clientId,
-      queue: new RemoteEventQueue(),
+      queue: new RemoteEventQueue(this.eventBufferLimits),
       signal: lifetime,
+      releaseSignal: () => { lifetime.removeEventListener('abort', abort) },
       deliveries: new Map(),
     }
     this.remoteEventClients.set(clientId, client)
-    for (const pending of this.pendingRemoteEvents.values()) this.deliverRemoteEvent(pending, client)
+    lifetime.addEventListener('abort', abort, { once: true })
     try {
-      yield { ...REMOTE_EVENT_STREAM_READY, clientId, host: registration.host }
+      if (lifetime.aborted) abort()
+      else {
+        this.enqueueRemoteEvent(client, encodeEvent({ ...REMOTE_EVENT_STREAM_READY, clientId, host: registration.host }, undefined))
+        for (const pending of this.pendingRemoteEvents.values()) {
+          if (!this.remoteEventClients.has(client.id)) break
+          this.deliverRemoteEvent(pending, client)
+        }
+      }
       yield* client.queue.iterate(lifetime)
     } finally {
+      lifetime.removeEventListener('abort', abort)
       this.removeRemoteEventClient(client)
     }
   }
@@ -543,7 +580,8 @@ export class TypertGatewayService extends Service implements TypertGateway {
       event: frame.event,
       args: frame.args,
     }
-    for (const client of this.remoteEventClients.values()) client.queue.push(wire)
+    const encoded = encodeEvent(wire, undefined)
+    for (const client of this.remoteEventClients.values()) this.enqueueRemoteEvent(client, encoded)
   }
 
   private startRemoteEvent(source: TypertRemoteEventInvocation): void {
@@ -557,6 +595,12 @@ export class TypertGatewayService extends Service implements TypertGateway {
       const projected = projectRemoteEventRequest(source.request, source.context.subject)
       let id = randomUUID() as RemoteEventId
       while (this.pendingRemoteEvents.has(id)) id = randomUUID() as RemoteEventId
+      const wire: RemoteEventInvocationFrame = {
+        type: 'waterfall', event: source.event, eventId: id, agentId: source.context.agentId, request: projected.request,
+      }
+      const frame = encodeEvent(wire, undefined)
+      if (this.pendingRemoteEvents.size >= this.pendingEventLimits.items
+        || frame.bytes > this.pendingEventLimits.bytes - this.pendingEventBytes) throw eventBufferOverflow('pending')
       let releaseContext: () => void
       try {
         const dispose = source.context.value.effect(
@@ -582,14 +626,8 @@ export class TypertGatewayService extends Service implements TypertGateway {
       }
       const pending: PendingRemoteEvent = {
         id,
-        source,
-        frame: {
-          type: 'waterfall',
-          event: source.event,
-          eventId: id,
-          agentId: source.context.agentId,
-          request: projected.request,
-        },
+        source: { resolve: source.resolve, reject: source.reject },
+        frame,
         deliveries: new Set(),
         releaseContext,
         releaseSignal: () => {
@@ -597,18 +635,33 @@ export class TypertGatewayService extends Service implements TypertGateway {
         },
       }
       this.pendingRemoteEvents.set(id, pending)
+      this.pendingEventBytes += frame.bytes
       for (const signal of signals) signal.addEventListener('abort', abort, { once: true })
       if ([...signals].some(signal => signal.aborted)) abort()
-      else for (const client of this.remoteEventClients.values()) this.deliverRemoteEvent(pending, client)
+      else {
+        // Reserve all deliveries before one slow Client can reject its last owned delivery.
+        const clients = [...this.remoteEventClients.values()]
+        for (const client of clients) this.attachRemoteEventDelivery(pending, client)
+        for (const client of clients) this.enqueueRemoteEvent(client, frame)
+      }
     } catch (error) {
       source.reject(error)
     }
   }
 
-  private deliverRemoteEvent(pending: PendingRemoteEvent, client: RemoteEventClient): void {
+  private attachRemoteEventDelivery(pending: PendingRemoteEvent, client: RemoteEventClient): void {
     pending.deliveries.add(client)
     client.deliveries.set(pending.id, pending)
-    client.queue.push(pending.frame)
+  }
+
+  private deliverRemoteEvent(pending: PendingRemoteEvent, client: RemoteEventClient): void {
+    this.attachRemoteEventDelivery(pending, client)
+    this.enqueueRemoteEvent(client, pending.frame)
+  }
+
+  private enqueueRemoteEvent(client: RemoteEventClient, frame: EncodedEvent<undefined>): void {
+    if (this.remoteEventClients.get(client.id) !== client || client.queue.closed) return
+    if (!client.queue.push(frame)) this.removeRemoteEventClient(client, eventBufferOverflow('client'))
   }
 
   private receiveRemoteEventResult(
@@ -637,10 +690,15 @@ export class TypertGatewayService extends Service implements TypertGateway {
     client.deliveries.delete(pending.id)
   }
 
-  private removeRemoteEventClient(client: RemoteEventClient): void {
+  private removeRemoteEventClient(client: RemoteEventClient, overflow?: unknown): void {
+    if (this.remoteEventClients.get(client.id) !== client) return
     this.remoteEventClients.delete(client.id)
-    for (const pending of [...client.deliveries.values()]) this.removeRemoteEventDelivery(pending, client)
-    client.queue.end()
+    client.releaseSignal()
+    client.queue.end(overflow, overflow !== undefined)
+    for (const pending of [...client.deliveries.values()]) {
+      this.removeRemoteEventDelivery(pending, client)
+      if (overflow !== undefined && pending.deliveries.size === 0) this.cancelRemoteEvent(pending, overflow)
+    }
   }
 
   private settleRemoteEvent(pending: PendingRemoteEvent, outcome: TypertRemoteEventOutcome): void {
@@ -656,6 +714,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
 
   private finishRemoteEvent(pending: PendingRemoteEvent): void {
     this.pendingRemoteEvents.delete(pending.id)
+    this.pendingEventBytes -= pending.frame.bytes
     pending.releaseSignal()
     pending.releaseContext()
     const clients = new Set(pending.deliveries)
@@ -664,14 +723,15 @@ export class TypertGatewayService extends Service implements TypertGateway {
       type: 'cancel',
       eventId: pending.id,
     }
-    for (const client of clients) client.queue.push(cancellation)
+    const encoded = encodeEvent(cancellation, undefined)
+    for (const client of clients) this.enqueueRemoteEvent(client, encoded)
   }
 
-  private closeRemoteEvents(reason: unknown): void {
-    for (const pending of [...this.pendingRemoteEvents.values()]) {
-      this.cancelRemoteEvent(pending, reason)
-    }
-    for (const client of [...this.remoteEventClients.values()]) client.queue.end()
+  private closeRemoteEvents(reason: unknown, failed = false): void {
+    // Close buffers before revocation so cancellation frames cannot overflow other generations.
+    for (const client of this.remoteEventClients.values()) client.queue.end(reason, failed)
+    for (const pending of [...this.pendingRemoteEvents.values()]) this.cancelRemoteEvent(pending, reason)
+    for (const client of [...this.remoteEventClients.values()]) this.removeRemoteEventClient(client)
   }
 
   private async invokeRpc(
@@ -1066,51 +1126,48 @@ type RemoteEventWireFrame =
   | RemoteEventEmitFrame
   | RemoteEventInvocationFrame
   | RemoteEventCancellationFrame
+  | RemoteEventReadyFrame
 
-/** Pull-driven queue owned by one connected Client event generation. */
+/** Pull-driven bounded queue owned by one connected Client event generation. */
 class RemoteEventQueue {
-  private readonly frames = new Deque<RemoteEventWireFrame>()
+  private readonly frames: EventBuffer<undefined>
   private waiter: (() => void) | undefined
-  private closed = false
+  private stopped: { readonly reason: unknown; readonly failed: boolean } | undefined
 
-  push(frame: RemoteEventWireFrame): void {
-    if (this.closed) return
-    this.frames.pushBack(frame)
+  constructor(limits: EventBufferLimits) { this.frames = new EventBuffer(limits) }
+  get closed(): boolean { return this.stopped !== undefined }
+
+  push(frame: EncodedEvent<undefined>): boolean {
+    if (this.closed || !this.frames.push(frame)) return false
     this.waiter?.()
+    return true
   }
 
-  end(): void {
+  end(reason?: unknown, failed = false): void {
     if (this.closed) return
-    this.closed = true
+    this.stopped = { reason, failed }
+    while (this.frames.pop() !== undefined) { /* Release retained JSON snapshots immediately. */ }
     this.waiter?.()
   }
 
   async *iterate(signal: AbortSignal): AsyncGenerator<RemoteEventWireFrame> {
-    const abort = (): void => { this.end() }
-    signal.addEventListener('abort', abort, { once: true })
     try {
       while (true) {
-        while (this.frames.size > 0) yield this.frames.popFront() as RemoteEventWireFrame
-        if (this.closed || signal.aborted) return
-        await new Promise<void>((resolve) => { this.waiter = resolve })
-        this.waiter = undefined
+        if (this.stopped !== undefined) {
+          if (this.stopped.failed) throw this.stopped.reason
+          return
+        }
+        if (signal.aborted) return
+        const frame = this.frames.pop()
+        if (frame !== undefined) yield JSON.parse(frame.text) as RemoteEventWireFrame
+        else {
+          await new Promise<void>((resolve) => { this.waiter = resolve })
+          this.waiter = undefined
+        }
       }
     } finally {
-      signal.removeEventListener('abort', abort)
+      this.end()
     }
-  }
-}
-
-function assertRemoteEventFrame(frame: TypertRemoteEventFrame): void {
-  assertRemoteEventName(frame)
-  if (!Array.isArray(frame.args) || !isRemoteJsonValue(frame.args)) {
-    throw new TypeError(`typert gateway: Remote event ${JSON.stringify(frame.event)} arguments are not lossless JSON data`)
-  }
-}
-
-function assertRemoteEventName(frame: { readonly event: unknown }): void {
-  if (typeof frame.event !== 'string' || frame.event.length === 0) {
-    throw new TypeError('typert gateway: Remote event name must be a nonempty string')
   }
 }
 

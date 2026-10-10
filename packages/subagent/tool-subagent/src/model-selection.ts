@@ -89,7 +89,7 @@ function assertNonEmpty(value: string | undefined, field: keyof DelegationModelR
 /**
  * Merge model-supplied selection fields over configured child defaults.
  * Provider and model form one route and must be supplied together. Changing
- * that route without an effort clears the configured route-owned effort.
+ * that route clears configured request controls; an explicit effort replaces the old effort.
  * @param parentOptions - Current parent values that supply missing child values.
  * @param configured - Tool-instance child defaults.
  * @param request - Model-facing route override.
@@ -117,9 +117,14 @@ export function requestedAgentOptions(
   const baselineModel = configured?.model ?? parentOptions.model
   const routeChanged = request.provider !== undefined
     && (request.provider !== baselineProvider || request.model !== baselineModel)
-  const { reasoningEffort: _configuredReasoningEffort, ...configuredWithoutReasoning } = configured ?? {}
+  const {
+    reasoningEffort: _configuredReasoningEffort,
+    serviceTier: _configuredServiceTier,
+    textVerbosity: _configuredTextVerbosity,
+    ...configuredWithoutControls
+  } = configured ?? {}
   return {
-    ...routeChanged && request.reasoning_effort === undefined ? configuredWithoutReasoning : configured,
+    ...routeChanged ? configuredWithoutControls : configured,
     ...request.provider === undefined ? {} : { provider: request.provider, model: request.model },
     ...request.reasoning_effort === undefined
       ? {}
@@ -161,6 +166,8 @@ export function hasConfiguredLlmSelection(options: AgentOptions | undefined): bo
   return options?.provider !== undefined
     || options?.model !== undefined
     || options?.reasoningEffort !== undefined
+    || options?.serviceTier !== undefined
+    || options?.textVerbosity !== undefined
 }
 
 /**
@@ -192,5 +199,9 @@ export async function preflightChildLlmRoute(
     provider,
     model,
     ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    ...requested?.serviceTier === undefined && (routeChanged || parentOptions.serviceTier === undefined)
+      ? {} : { serviceTier: requested?.serviceTier ?? parentOptions.serviceTier },
+    ...requested?.textVerbosity === undefined && (routeChanged || parentOptions.textVerbosity === undefined)
+      ? {} : { textVerbosity: requested?.textVerbosity ?? parentOptions.textVerbosity },
   }, signal)
 }

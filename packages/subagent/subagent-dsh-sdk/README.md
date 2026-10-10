@@ -53,6 +53,8 @@ The provider advertises `agentOptions: true`, with `outputSchema`/`depthLimit`/`
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-dsh-sdk) is the exhaustive source for every accepted field and its JSDoc.
 
+Explicit `serviceTier`/`textVerbosity` overrides pass through the nested SDK handshake. If omitted, they inherit the parent’s latest logged controls only for the exact same provider/model; an independent child route receives neither. These fields are not model-facing tool parameters.
+
 Request `agentOptions` override `provider`, `model`, and `maxTokens` independently. `reasoningEffort` has no provider-instance default: an omitted request leaves it absent so the selected child model resolves its own default. The model-facing subagent tool can select provider/model/reasoning per call; `maxTokens` remains deployment-controlled through tool config or this provider's default.
 
 ```yaml

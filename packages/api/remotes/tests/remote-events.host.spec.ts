@@ -8,6 +8,7 @@ import type {
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import { describe, expect, it } from 'vitest'
 import { apply, inject } from '../src/index.ts'
+import { RemoteEventSourceBuffer } from '@deepseek-ai/dsh-api-gateway/src/event-buffer.ts'
 
 interface GatewayProbe {
   source: TypertRemoteEventSource | undefined
@@ -46,9 +47,10 @@ async function setup(): Promise<{
   return { ctx, gateway, fiber }
 }
 
-function sourceOf(gateway: GatewayProbe): TypertRemoteEventSource {
-  if (gateway.source === undefined) throw new Error('fixture Gateway has no Remote event source')
-  return gateway.source
+function sourceOf(gateway: GatewayProbe, items = 128, bytes = 262144): (signal: AbortSignal) => ReturnType<TypertRemoteEventSource> {
+  const source = gateway.source
+  if (source === undefined) throw new Error('fixture Gateway has no Remote event source')
+  return signal => source(signal, new RemoteEventSourceBuffer(signal, { items, bytes }))
 }
 
 function emitRaw(ctx: Context, event: string, args: readonly unknown[]): void {

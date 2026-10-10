@@ -263,6 +263,8 @@ interface TypertRemoteNamespaceMap {}
 
 ## Host Gateway
 
+[`TypertRemoteEventSource`](../../packages/api/gateway/src/types.ts) 接收 `(signal, buffer)`。其中的 `TypertRemoteEventBuffer` 通过 `push(dispatch)` 生成 JSON 快照，并通过 `iterate(cleanup)` 挂载单消费者投递及及时的 listener 清理；Agent、Context 及 signal 身份保留在进程内。[Gateway](../../packages/api/gateway/README.zh.md#forwarded-event-buffers) 拥有经过校验的 source、Client 和待完成调用上限及超载语义。
+
 Connection 会先解码 carrier envelope，再调用 `ctx.typertGateway`。请求将精确的具名 wire 字段与 carrier 的取消 signal 分开携带；基础设施与边界失败由 `TypertGatewayError` 承载，其 `gateway/*` 码就是普通的 `RemoteError` 码，因此 RPC 适配器会把每个经结构识别的 `RemoteError` 连同其 code 与 details 原样放行，只把无法识别的异常归并为 `gateway/internal`。
 
 ```ts type-equiv
@@ -308,6 +310,7 @@ type TypertGatewayErrorCode =
   | 'gateway/service-unavailable'
   | 'gateway/signature-invalid'
   | 'gateway/uplink-overflow'
+  | 'gateway/event-overflow'
 ```
 
 ```ts type-equiv

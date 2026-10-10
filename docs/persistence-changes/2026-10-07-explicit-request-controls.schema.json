@@ -1,0 +1,627 @@
+{
+  "formatVersion": 2,
+  "roots": [
+    {
+      "key": "event:model/selection",
+      "kind": "event",
+      "event": "model/selection",
+      "surface": false,
+      "digest": "041111caf5b7db48fecf5668f2dbe5e8d9441816353c2f7d8245d2ddaafd8095",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 10,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 11,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 11,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 12,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "serviceTier",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "textVerbosity",
+                "type": 6,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              4,
+              5
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "default"
+          },
+          {
+            "kind": "literal",
+            "value": "priority"
+          },
+          {
+            "kind": "union",
+            "types": [
+              7,
+              8,
+              9
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "high"
+          },
+          {
+            "kind": "literal",
+            "value": "low"
+          },
+          {
+            "kind": "literal",
+            "value": "medium"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "model/selection"
+          }
+        ]
+      }
+    },
+    {
+      "key": "event:request/header",
+      "kind": "event",
+      "event": "request/header",
+      "surface": false,
+      "digest": "e6c1755329990e534502375ac02a6eeb09fff3e9e6b3b7e3f7d21d915c3ef0a6",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 6,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 26,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "header",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "reason",
+                "type": 21,
+                "optional": false
+              },
+              {
+                "name": "startsSeries",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "adapterDefaults",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "config",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "system",
+                "type": 16,
+                "optional": true
+              },
+              {
+                "name": "tools",
+                "type": 17,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "maxTokens",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "maxTokens",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "model",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "serviceTier",
+                "type": 8,
+                "optional": true
+              },
+              {
+                "name": "stop",
+                "type": 11,
+                "optional": true
+              },
+              {
+                "name": "temperature",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "textVerbosity",
+                "type": 12,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              9,
+              10
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "default"
+          },
+          {
+            "kind": "literal",
+            "value": "priority"
+          },
+          {
+            "kind": "array",
+            "element": 7
+          },
+          {
+            "kind": "union",
+            "types": [
+              13,
+              14,
+              15
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "high"
+          },
+          {
+            "kind": "literal",
+            "value": "low"
+          },
+          {
+            "kind": "literal",
+            "value": "medium"
+          },
+          {
+            "kind": "primitive",
+            "type": "never"
+          },
+          {
+            "kind": "array",
+            "element": 18
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "deferLoading",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "description",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "parameters",
+                "type": 19,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [],
+            "indices": [
+              {
+                "key": 7,
+                "value": 20
+              }
+            ]
+          },
+          {
+            "kind": "opaque",
+            "reason": "unknown"
+          },
+          {
+            "kind": "union",
+            "types": [
+              22,
+              23,
+              24,
+              25
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "change"
+          },
+          {
+            "kind": "literal",
+            "value": "initial"
+          },
+          {
+            "kind": "literal",
+            "value": "resume"
+          },
+          {
+            "kind": "literal",
+            "value": "series"
+          },
+          {
+            "kind": "literal",
+            "value": "request/header"
+          }
+        ]
+      }
+    },
+    {
+      "key": "event:subagent/descriptor",
+      "kind": "event",
+      "event": "subagent/descriptor",
+      "surface": false,
+      "digest": "010e20432158fda87d1468194248ce13d75dcd1fd97e92a491f0346a6941d375",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 17,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 14,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 14,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 18,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              2,
+              15
+            ]
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "agentModel",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "agentProvider",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "agentReasoningEffort",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "agentServiceTier",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "agentTextVerbosity",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "label",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "mode",
+                "type": 11,
+                "optional": false
+              },
+              {
+                "name": "persona",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "toolFilter",
+                "type": 12,
+                "optional": true
+              },
+              {
+                "name": "version",
+                "type": 14,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              5,
+              6
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "default"
+          },
+          {
+            "kind": "literal",
+            "value": "priority"
+          },
+          {
+            "kind": "union",
+            "types": [
+              8,
+              9,
+              10
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "high"
+          },
+          {
+            "kind": "literal",
+            "value": "low"
+          },
+          {
+            "kind": "literal",
+            "value": "medium"
+          },
+          {
+            "kind": "literal",
+            "value": "continuable"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allow",
+                "type": 13,
+                "optional": true
+              },
+              {
+                "name": "deny",
+                "type": 13,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 3
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "label",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "mode",
+                "type": 16,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 14,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "one-shot"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "literal",
+            "value": "subagent/descriptor"
+          }
+        ]
+      }
+    }
+  ],
+  "types": []
+}

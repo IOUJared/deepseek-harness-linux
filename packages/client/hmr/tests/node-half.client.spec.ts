@@ -3,7 +3,8 @@
  * report through clientModuleHost.rebuilt, and everything dies with the fiber.
  */
 import { EventEmitter } from 'node:events'
-import type { ServerResponse, IncomingMessage } from 'node:http'
+import { ServerResponse, IncomingMessage } from 'node:http'
+import { Socket } from 'node:net'
 import { mkdtempSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,9 +18,14 @@ import { apply, Config, EVENTS_ENDPOINT, inject } from '../src/index.ts'
 const POLL_MS = 20
 
 let dir: string
+const contexts: Context[] = []
+const serverRoutes = new WeakMap<WebServer, WebRoute[]>()
 
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'dsh-hmr-')) })
-afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => {
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  rmSync(dir, { recursive: true, force: true })
+})
 
 /**
  * Controllable clientModuleHost fake over a mutable id → bundle-path table.
@@ -86,11 +92,14 @@ function fakeHttpServer(routes: WebRoute[]): WebServer {
     tapIndex: () => () => {},
     port: 0,
   }
-  return fake as WebServer
+  const server = fake as WebServer
+  serverRoutes.set(server, routes)
+  return server
 }
 
 async function mount(clientModuleHost: FakeHost, webServer: WebServer) {
   const ctx = new Context()
+  contexts.push(ctx)
   ctx.provide('clientModules', clientModuleHost)
   ctx.provide('webServer', webServer)
   const fiber = ctx.plugin(
@@ -98,6 +107,12 @@ async function mount(clientModuleHost: FakeHost, webServer: WebServer) {
     { pollIntervalMs: POLL_MS },
   )
   await fiber.await()
+  const request = new IncomingMessage(new Socket())
+  request.method = 'GET'
+  const response = new ServerResponse(request)
+  ctx.effect(() => () => { request.socket.destroy() })
+  response.write = () => true
+  await serverRoutes.get(webServer)![0]!.handler(request, response)
   return fiber
 }
 

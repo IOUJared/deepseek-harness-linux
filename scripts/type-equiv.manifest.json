@@ -2,6 +2,41 @@
   "comment": "Maps each primary ` ```ts type-equiv ` or ` ```ts public-api ` block (by doc + declared symbol + projection) to the source declaration and original JSDoc it must match. Paired `.zh.md` blocks are byte-identical derivatives checked through their unsuffixed sibling and have no duplicate entry. Omit projection for the complete declaration; use public-api with a ` ```ts public-api ` block for a body-stripped public class declaration. verify-type-equiv.ts enforces a 1:1 correspondence between primary blocks and entries. Add an entry when you add a primary source-equivalence block; remove it when you remove the block.",
   "entries": [
     {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "SessionPromptAdmissionRequest",
+      "source": "packages/api/session-controller/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "SessionPromptAdmissionValue",
+      "source": "packages/api/session-controller/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "CodexModelAccount",
+      "source": "packages/llm/llm-pi-ai/src/codex-accounts.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "CodexAccountsDescription",
+      "source": "packages/llm/llm-pi-ai/src/codex-accounts.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "CodexAccountLogin",
+      "source": "packages/llm/llm-pi-ai/src/codex-accounts.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "CodexAccountLoginResult",
+      "source": "packages/llm/llm-pi-ai/src/codex-accounts.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "CodexAccountId",
+      "source": "packages/llm/llm-pi-ai/src/account-binding.ts"
+    },
+    {
       "doc": "docs/subsystems/compaction.md",
       "symbol": "ImageOffloadTarget",
       "source": "packages/compaction/compaction-image-offload/src/projection.ts"
@@ -94,6 +129,36 @@
     {
       "doc": "docs/subsystems/llm-streaming.md",
       "symbol": "LlmModelReasoningInfo",
+      "source": "packages/llm/llm/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "ServiceTier",
+      "source": "packages/llm/llm/src/brand.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "TextVerbosity",
+      "source": "packages/llm/llm/src/brand.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "LlmServiceTierInfo",
+      "source": "packages/llm/llm/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "LlmModelServiceTierInfo",
+      "source": "packages/llm/llm/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "LlmTextVerbosityInfo",
+      "source": "packages/llm/llm/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "LlmModelTextVerbosityInfo",
       "source": "packages/llm/llm/src/types.ts"
     },
     {

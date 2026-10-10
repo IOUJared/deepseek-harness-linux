@@ -14,7 +14,9 @@ const modelSelectionSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
   reasoningEffort: z.string().min(1).optional(),
-}) as unknown as z.ZodType<ModelSelection>
+  serviceTier: z.enum(['default', 'priority']).optional(),
+  textVerbosity: z.enum(['low', 'medium', 'high']).optional(),
+}) as z.ZodType<ModelSelection>
 
 const modelSelectionProjectionStateSchema = z.object({
   lastUsed: modelSelectionSchema.nullable(),
@@ -48,6 +50,8 @@ function applyModelSelectionProjection(
     ...(event.data.header.config.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: String(event.data.header.config.reasoningEffort) }),
+    ...(event.data.header.config.serviceTier === undefined ? {} : { serviceTier: event.data.header.config.serviceTier }),
+    ...(event.data.header.config.textVerbosity === undefined ? {} : { textVerbosity: event.data.header.config.textVerbosity }),
   }
   const pending = sameSelection(state.pending, lastUsed) ? null : state.pending
   return sameSelection(state.lastUsed, lastUsed) && pending === state.pending
@@ -64,14 +68,16 @@ const modelSelectionProjection = {
     viewSchema: modelSelectionProjectionSchema,
     view: state => ({ lastUsed: state.lastUsed, next: state.pending ?? state.lastUsed }),
   },
-  stateVersion: 2,
+  stateVersion: 3,
 } satisfies ProjectionDefinition<'modelSelection', ModelSelectionProjectionState>
 
 function sameSelection(left: ModelSelection | null, right: ModelSelection | null): boolean {
   return left === right || (left !== null && right !== null
     && left.provider === right.provider
     && left.model === right.model
-    && left.reasoningEffort === right.reasoningEffort)
+    && left.reasoningEffort === right.reasoningEffort
+    && left.serviceTier === right.serviceTier
+    && left.textVerbosity === right.textVerbosity)
 }
 
 /**

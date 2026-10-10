@@ -953,6 +953,21 @@ describe('HarnessSdkJsonRpcServer', () => {
     },
   )
 
+  it.each([
+    ['serviceTier', 'auto'], ['serviceTier', null], ['serviceTier', 1],
+    ['textVerbosity', 'verbose'], ['textVerbosity', null], ['textVerbosity', true],
+  ])('rejects invalid initialize %s=%s before route resolution', async (field, value) => {
+    const ctx = new Context()
+    const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+    await expect(server.handleRequest('initialize', {
+      cwd: '.', provider: 'missing', model: 'missing', [String(field)]: value,
+    })).rejects.toThrow(`initialize ${String(field)} must be`)
+    await expect(server.prompt({ sessionId: 'no-prompt', contentBlocks: [] }))
+      .rejects.toThrow('SDK server is not initialized')
+    await server.shutdown()
+    await ctx.fiber.dispose()
+  })
+
   it('rejects malformed initialize reasoningEffort values at the wire boundary', async () => {
     const ctx = new Context()
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
@@ -1138,18 +1153,20 @@ describe('HarnessSdkJsonRpcServer', () => {
       get: () => ({ listProviders: () => [{ id: 'mock', name: 'Mock' }], resolveCallConfig }),
     } as unknown as Context
     const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport()) as unknown as {
-      initialize(params: { cwd: string; provider: string; model: string; reasoningEffort?: string; maxTokens?: number }): Promise<unknown>
+      initialize(params: { cwd: string; provider: string; model: string; reasoningEffort?: string; serviceTier?: 'default' | 'priority'; textVerbosity?: 'low' | 'medium' | 'high'; maxTokens?: number }): Promise<unknown>
       getOrCreateSession(sessionId: string): Promise<unknown>
       shutdown(): Promise<Record<string, never>>
     }
 
-    await server.initialize({ cwd: '.', provider: 'mock', model: 'model', reasoningEffort: 'high', maxTokens: 123 })
+    await server.initialize({ cwd: '.', provider: 'mock', model: 'model', reasoningEffort: 'high', serviceTier: 'priority', textVerbosity: 'high', maxTokens: 123 })
     await server.getOrCreateSession('relative')
 
     expect(resolveCallConfig).toHaveBeenCalledWith({
       provider: 'mock',
       model: 'model',
       reasoningEffort: ReasoningEffortId('high'),
+      serviceTier: 'priority',
+      textVerbosity: 'high',
       maxTokens: 123,
     })
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
@@ -1158,6 +1175,8 @@ describe('HarnessSdkJsonRpcServer', () => {
         provider: 'mock',
         model: 'model',
         reasoningEffort: ReasoningEffortId('high'),
+        serviceTier: 'priority',
+        textVerbosity: 'high',
         maxTokens: 123,
       },
     }))

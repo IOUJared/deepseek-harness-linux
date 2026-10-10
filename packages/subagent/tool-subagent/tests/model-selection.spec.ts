@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -15,6 +15,7 @@ import {
   assertAllowedModelRoutes,
   assertAllowedModelSelection,
   preflightChildLlmRoute,
+  requestedAgentOptions,
 } from '../src/model-selection.ts'
 import { callSubagent, modelSelectionSetupAgent, setup, text } from './harness.ts'
 
@@ -38,6 +39,33 @@ function parentWithRoute(
 }
 
 describe('dsh-tool-subagent model selection', () => {
+  it('drops configured request controls when model-facing fields change the route without exposing new tool parameters', () => {
+    const configured = {
+      provider: 'alpha', model: 'parent-model', serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high'),
+    }
+    expect(requestedAgentOptions({}, configured, { reasoning_effort: 'low' }, true)).toEqual({
+      ...configured, reasoningEffort: 'low',
+    })
+    expect(requestedAgentOptions({}, configured, { provider: 'beta', model: 'other-model' }, true)).toEqual({
+      provider: 'beta', model: 'other-model',
+    })
+  })
+
+  it('preflights inherited request controls only against the unchanged parent route', async () => {
+    const ctx = new Context()
+    await ctx.plugin((await import('@deepseek-ai/dsh-llm')).default)
+    const resolve = vi.spyOn(ctx.llm, 'resolveCallConfig').mockImplementation(async config => config)
+    try {
+      const parent = { provider: 'alpha', model: 'parent-model', serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('low') }
+      await preflightChildLlmRoute(ctx.llm, parent, { reasoningEffort: ReasoningEffortId('low') }, new AbortController().signal)
+      expect(resolve).toHaveBeenLastCalledWith({ ...parent, reasoningEffort: 'low' }, expect.any(AbortSignal))
+      await preflightChildLlmRoute(ctx.llm, parent, { model: 'child-model' }, new AbortController().signal)
+      expect(resolve).toHaveBeenLastCalledWith({ provider: 'alpha', model: 'child-model' }, expect.any(AbortSignal))
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('rejects empty route ids at the configuration boundary', () => {
     expect(() => { assertAllowedModelRoutes([{ provider: '', model: 'model' }]) })
       .toThrow('requires non-empty provider and model ids')

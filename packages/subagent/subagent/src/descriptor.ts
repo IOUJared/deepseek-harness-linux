@@ -7,8 +7,8 @@
  *
  * The descriptor deliberately snapshots explicit fields rather than the
  * merge-extensible `AgentOptions` object: an unrelated extension value cannot
- * make continuation fail merely because it is not JSON, and later composition
- * inputs require a deliberate {@link SUBAGENT_DESCRIPTOR_VERSION} change. It
+ * make continuation fail merely because it is not JSON. Declared optional
+ * request controls remain absent in older descriptors and on cold resume. It
  * omits `subagentDepth` — cold resume trusts the persisted header's
  * `delegationDepth` as the monotone floor — and `outputSchema`, which belongs
  * to one activation's result contract rather than durable child composition.
@@ -23,7 +23,7 @@
 
 import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ServiceTier, TextVerbosity, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -42,8 +42,8 @@ declare module '@deepseek-ai/dsh-session/types' {
 /**
  * The current descriptor format version, stamped into every appended
  * `subagent/descriptor` event and required verbatim by {@link foldSubagentDescriptor}.
- * Supporting another composition input is a deliberate version change, never
- * an implicit extra field.
+ * Breaking composition changes require a deliberate version change; additive
+ * declared optional fields retain omission in existing records.
  */
 export const SUBAGENT_DESCRIPTOR_VERSION = 3
 
@@ -79,6 +79,10 @@ export interface ContinuableSubagentDescriptorData extends SubagentDescriptorBas
   readonly agentModel?: string
   /** Resolved child `agentOptions.reasoningEffort`, when one was declared. */
   readonly agentReasoningEffort?: ReasoningEffortId
+  /** Child service tier retained for cold resume; absence remains provider-owned. */
+  readonly agentServiceTier?: ServiceTier
+  /** Child text verbosity retained for cold resume; absence remains provider-owned. */
+  readonly agentTextVerbosity?: TextVerbosity
   /** Per-child persona that shadows the deployment persona on resume. */
   readonly persona?: string
   /** Child tool scoping reapplied on resume. */
@@ -116,6 +120,10 @@ export interface ContinuableSubagentDescriptorInput extends SubagentDescriptorIn
   readonly agentModel?: string
   /** Requested child `agentOptions.reasoningEffort`. */
   readonly agentReasoningEffort?: ReasoningEffortId
+  /** Child service tier retained for cold resume; absence remains provider-owned. */
+  readonly agentServiceTier?: ServiceTier
+  /** Child text verbosity retained for cold resume; absence remains provider-owned. */
+  readonly agentTextVerbosity?: TextVerbosity
   /** Requested per-child persona. */
   readonly persona?: string
   /** Requested child tool scoping. */
@@ -139,6 +147,8 @@ const CONTINUABLE_DESCRIPTOR_KEYS = new Set([
   'agentProvider',
   'agentModel',
   'agentReasoningEffort',
+  'agentServiceTier',
+  'agentTextVerbosity',
   'persona',
   'toolFilter',
 ])
@@ -238,6 +248,16 @@ function parseSubagentDescriptor(value: unknown): SubagentDescriptorData | undef
   const agentProvider = optionalString(value, 'agentProvider')
   const agentModel = optionalString(value, 'agentModel')
   const agentReasoningEffort = optionalString(value, 'agentReasoningEffort') as ReasoningEffortId | undefined
+  const tier = optionalString(value, 'agentServiceTier')
+  if (tier !== undefined && tier !== 'default' && tier !== 'priority') {
+    throw new Error('persisted subagent descriptor agentServiceTier must be "default" or "priority"')
+  }
+  const verbosity = optionalString(value, 'agentTextVerbosity')
+  if (verbosity !== undefined && verbosity !== 'low' && verbosity !== 'medium' && verbosity !== 'high') {
+    throw new Error('persisted subagent descriptor agentTextVerbosity must be "low", "medium", or "high"')
+  }
+  const agentServiceTier = tier === undefined ? undefined : ServiceTier(tier)
+  const agentTextVerbosity = verbosity === undefined ? undefined : TextVerbosity(verbosity)
   const persona = optionalString(value, 'persona')
   const toolFilter = Object.hasOwn(value, 'toolFilter')
     ? parseToolFilter(value['toolFilter'])
@@ -250,6 +270,8 @@ function parseSubagentDescriptor(value: unknown): SubagentDescriptorData | undef
     ...agentProvider !== undefined ? { agentProvider } : {},
     ...agentModel !== undefined ? { agentModel } : {},
     ...agentReasoningEffort !== undefined ? { agentReasoningEffort } : {},
+    ...agentServiceTier !== undefined ? { agentServiceTier } : {},
+    ...agentTextVerbosity !== undefined ? { agentTextVerbosity } : {},
     ...persona !== undefined ? { persona } : {},
     ...toolFilter !== undefined ? { toolFilter } : {},
   }
@@ -292,6 +314,8 @@ export function snapshotSubagentDescriptor(input: SubagentDescriptorInput): Suba
       ...input.agentProvider !== undefined ? { agentProvider: input.agentProvider } : {},
       ...input.agentModel !== undefined ? { agentModel: input.agentModel } : {},
       ...input.agentReasoningEffort !== undefined ? { agentReasoningEffort: input.agentReasoningEffort } : {},
+      ...input.agentServiceTier !== undefined ? { agentServiceTier: input.agentServiceTier } : {},
+      ...input.agentTextVerbosity !== undefined ? { agentTextVerbosity: input.agentTextVerbosity } : {},
       ...input.persona !== undefined ? { persona: input.persona } : {},
       ...input.toolFilter !== undefined ? { toolFilter: input.toolFilter } : {},
     }

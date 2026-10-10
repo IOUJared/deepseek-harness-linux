@@ -6,8 +6,8 @@
 // record cannot hang on a live model answering differently); assertion steps
 // run in replay/refresh only. Streaming fidelity is asserted from the durable
 // embedded Assistant stream, not transient DOM.
-// Record: DSH_SNAPSHOT=record writes session.v3.jsonl, then a keyless
-// DSH_SNAPSHOT=refresh regenerates ui.expected.md.
+// The admission owner retains the current writer log and borrows the original
+// readable request headers; historical fresh-round-trip generations stay unchanged.
 // Suite setup (beforeAll, not per step): one fixed page clock
 // (page.clock.setFixedTime) and one routed Remote mux socket
 // (page.routeWebSocket) serve every step below, so the reconnect checkpoints
@@ -31,16 +31,16 @@ import {
   connectFreshWorkspace, expandTurnProcesses, newEnglishPage, REPO_ROOT, saveFailureShot,
 } from './support.ts'
 
-const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip', import.meta.url))
-const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/session.v3.jsonl', import.meta.url))
-const UI_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/ui.expected.md', import.meta.url))
-const ECHO_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/submission-echo.expected.md', import.meta.url))
+const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip-admission', import.meta.url))
+const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip-admission/session.v4.jsonl', import.meta.url))
+const UI_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip-admission/ui.expected.md', import.meta.url))
+const ECHO_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip-admission/submission-echo.expected.md', import.meta.url))
 const ACCEPTED_RECONNECT_EXPECTED = join(SNAPSHOT_DIR, 'accepted-reconnect.expected.md')
 const BLANK_EXPECTED = join(SNAPSHOT_DIR, 'blank-reload.expected.md')
 const UI_EXPANDED_EXPECTED = fileURLToPath(
-  new URL('../../../snapshots/web/fresh-round-trip/ui-expanded.expected.md', import.meta.url),
+  new URL('../../../snapshots/web/fresh-round-trip-admission/ui-expanded.expected.md', import.meta.url),
 )
-const WEB_CONTEXT_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/web-context.expected.md', import.meta.url))
+const WEB_CONTEXT_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip-admission/web-context.expected.md', import.meta.url))
 const MODE = webSnapshotMode()
 
 // The scenario's one drive prompt. Record sends it; replay asserts the
@@ -141,6 +141,13 @@ describe('web e2e: fresh round trip through the real assembly', () => {
         }, PROMPT),
         admitted,
       ])
+      expect(response.request().postDataJSON()).toMatchObject({
+        payload: { args: { request: {
+          mode: 'queue',
+          content: [{ type: 'text', text: PROMPT }],
+          clientTimeZone: 'Asia/Shanghai',
+        } } },
+      })
       expect(await response.json()).toMatchObject({ result: { ok: true, value: { accepted: true } } })
       accepted = true
       await compareOrRefreshGolden(ECHO_EXPECTED, echoSnapshot, MODE)
@@ -325,7 +332,7 @@ describe('web e2e: fresh round trip through the real assembly', () => {
     expect(tripwire.warnings).toEqual([])
     await assertFixtureInventory(SNAPSHOT_DIR, [
       'blank-reload.expected.md',
-      'session.v3.jsonl',
+      'session.v4.jsonl',
       'accepted-reconnect.expected.md',
       'submission-echo.expected.md',
       'system-prompt.expected.md',

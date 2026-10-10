@@ -263,6 +263,8 @@ interface TypertRemoteNamespaceMap {}
 
 ## Host Gateway
 
+[`TypertRemoteEventSource`](../../packages/api/gateway/src/types.ts) receives `(signal, buffer)`. Its `TypertRemoteEventBuffer` snapshots JSON through `push(dispatch)` and attaches single-consumer delivery and prompt listener cleanup through `iterate(cleanup)`; Agent, Context and signal identities remain process-local. [Gateway](../../packages/api/gateway/README.md#forwarded-event-buffers) owns validated source, Client and pending limits and overload semantics.
+
 Connection decodes its carrier envelope before calling `ctx.typertGateway`. The request carries exact named wire fields and the carrier's cancellation signal separately; infrastructure and boundary failures ride `TypertGatewayError`, whose `gateway/*` codes are ordinary `RemoteError` codes, so the RPC adapter passes every structurally identified `RemoteError` through with its code and details intact and folds only unrecognized exceptions into `gateway/internal`.
 
 ```ts type-equiv
@@ -308,6 +310,7 @@ type TypertGatewayErrorCode =
   | 'gateway/service-unavailable'
   | 'gateway/signature-invalid'
   | 'gateway/uplink-overflow'
+  | 'gateway/event-overflow'
 ```
 
 ```ts type-equiv

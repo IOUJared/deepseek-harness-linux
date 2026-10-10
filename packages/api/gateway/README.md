@@ -40,9 +40,27 @@ Every stream also carries a Client-to-Host uplink on the same logical stream. A 
 
 Stream cancellation and stopping keep read-local state, not a history of delivered items, on the Host downlink, Host uplink, and Client uplink pump. Completing the downlink also wakes pending uplink reads.
 
-Host composition can register one application event source through `registerRemoteEvents()`. Gateway reserves the internal `$events` logical endpoint for that source, accepts only empty `args`, and aborts streams opened by the registration when the source is withdrawn. API Remotes owns the event selection, argument validation, per-Client queues, and the Host home sent in the opening `{ type: 'ready', clientId, host: { home } }` frame. Its source factory attaches incremental listeners synchronously, so the Client publishes the generation and starts baseline reads only after incremental delivery is ready.
+Host composition can register one application event source through `registerRemoteEvents()`. Gateway reserves the internal `$events` logical endpoint for that source, accepts only empty `args`, and aborts streams opened by the registration when the source is withdrawn. API Remotes owns event selection, argument validation, and the Host home sent in the opening `{ type: 'ready', clientId, host: { home } }` frame. Its source factory attaches incremental listeners synchronously, so the Client publishes the generation and starts baseline reads only after incremental delivery is ready.
 
 `hasLiveClient()` checks the existing `$events` records for an uncancelled stream. A cancelled stream does not count even while its iterator is still awaiting cleanup; a bare WebSocket does not count. This synchronous observation does not guarantee delivery or Client provider readiness.
+
+<a id="forwarded-event-buffers"></a>
+### Forwarded event buffers
+
+Gateway Config validates positive safe integers; limits apply independently to each listed owner.
+
+| Config | Default | Owner |
+|---|---:|---|
+| `remoteEventBufferItems` | 128 | Built-in source backlog and each Client backlog |
+| `remoteEventBufferBytes` | 262144 | UTF-8 JSON snapshots in those backlogs |
+| `remoteEventPendingItems` | 128 | Pending scoped invocations, including disconnected Clients |
+| `remoteEventPendingBytes` | 262144 | Serialized pending invocation frames |
+
+Snapshots include JSON metadata; Agent, Context, AbortSignal and completion capabilities retain their identities but are excluded from byte accounting. Item limits bound their count. These are retained JSON limits, not whole-process heap or socket-envelope limits; each reader may also hold one delivered item. Producer mutation cannot change an admitted snapshot, and fanout shares its immutable encoding.
+
+`gateway/event-overflow` identifies `source`, `client` or `pending` in `details.field`. Source overflow rejects queued and admitted invocations, withdraws listeners and closes its registration's streams; retries do not recreate the source. Client overflow revokes only that generation's results and rejects invocations whose last delivery it owned; other Clients can still answer. Pending overflow rejects only the triggering invocation. None silently delegates to `next()`. Abort drains backlogs and revokes deliveries immediately, even with a paused reader; ordinary Client disconnection retains bounded pending invocations for reconnection.
+
+The source factory receives `(signal, buffer)`. Built-in Remotes uses the supplied `TypertRemoteEventBuffer`; third-party factories that ignore it own their producer-side bounds. A source failure requires explicit source re-registration after correcting capacity or load. Clients recover state through owner queries and baselines, not notification replay.
 
 <a id="client-service-clientremote-ctx-key-remote"></a>
 ## Client service: `ClientRemote` (ctx key: `remote`)

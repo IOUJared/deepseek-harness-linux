@@ -3,9 +3,9 @@
  * Harness runtime in its own process — own named profile and patch composition,
  * session, model route, and tools — driven over stdio JSON-RPC through the
  * TypeScript SDK client, so it shares no Cordis context. It accepts the
- * provider/model/reasoning/maxTokens subset of `agentOptions`; other start
- * features remain unsupported. The ONE thing it reads off `request.parent`
- * is the session's workspace cwd. This plugin uses named
+ * provider/model/request-control subset of `agentOptions`; other start
+ * features remain unsupported. The parent supplies the workspace cwd and
+ * compatible service-tier/text-verbosity controls when the exact route matches. This plugin uses named
  * exports only; a default would hide its loader metadata (see
  * `docs/postmortem/0001-acp-default-export-drops-inject.md`).
  * @module @deepseek-ai/dsh-subagent-dsh-sdk
@@ -17,7 +17,7 @@ import { isAbsolute, resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SubagentCapabilities, SubagentProvider, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
-import { assertPositiveFinite, NO_START_CAPABILITIES, resolveChildCwd, validateConfiguredCwd } from '@deepseek-ai/dsh-subagent'
+import { assertPositiveFinite, NO_START_CAPABILITIES, parentAgentOptionsForDelegation, resolveChildCwd, validateConfiguredCwd } from '@deepseek-ai/dsh-subagent'
 import {
   DEFAULT_DISPOSE_EOF_GRACE_MS,
   DEFAULT_DISPOSE_GRACE_MS,
@@ -113,15 +113,22 @@ const SDK_START_CAPABILITIES: SubagentCapabilities = Object.freeze({
 })
 
 /** Merge the request's supported route fields over this provider instance's defaults. */
-function resolveSdkRoute(config: ResolvedConfig, requested: AgentOptions | undefined): Pick<
+function resolveSdkRoute(config: ResolvedConfig, requested: AgentOptions | undefined, parent: AgentOptions): Pick<
   SdkRunSpec,
-  'provider' | 'model' | 'reasoningEffort' | 'maxTokens'
+  'provider' | 'model' | 'reasoningEffort' | 'serviceTier' | 'textVerbosity' | 'maxTokens'
 > {
   const maxTokens = requested?.maxTokens ?? config.maxTokens
+  const provider = requested?.provider ?? config.provider
+  const model = requested?.model ?? config.model
+  const sameRoute = provider === parent.provider && model === parent.model
+  const serviceTier = requested?.serviceTier ?? (sameRoute ? parent.serviceTier : undefined)
+  const textVerbosity = requested?.textVerbosity ?? (sameRoute ? parent.textVerbosity : undefined)
   return {
-    provider: requested?.provider ?? config.provider,
-    model: requested?.model ?? config.model,
+    provider,
+    model,
     ...requested?.reasoningEffort === undefined ? {} : { reasoningEffort: requested.reasoningEffort },
+    ...serviceTier === undefined ? {} : { serviceTier },
+    ...textVerbosity === undefined ? {} : { textVerbosity },
     ...maxTokens === undefined ? {} : { maxTokens },
   }
 }
@@ -153,7 +160,7 @@ class SdkSubagentProvider implements SubagentProvider {
       this.ctx.logger.warn(`subagent-dsh-sdk "${this.name}": child start failed: %o`, error)
       throw failure
     }
-    const route = resolveSdkRoute(this.config, request.agentOptions)
+    const route = resolveSdkRoute(this.config, request.agentOptions, parentAgentOptionsForDelegation(request.parent))
     const spec: SdkRunSpec = {
       ...this.config.dshBin === undefined ? {} : { dshBin: this.config.dshBin },
       profile: this.config.profile,

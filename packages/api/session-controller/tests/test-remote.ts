@@ -54,6 +54,8 @@ import type {
   SessionPageRequest,
   SessionPromptRequest,
   SessionPromptValue,
+  SessionPromptAdmissionRequest,
+  SessionPromptAdmissionValue,
   SessionRenameRequest,
   SessionRenameValue,
   SessionSearchRequest,
@@ -79,6 +81,7 @@ export interface TestSessionRemote {
   rename(request: SessionRenameRequest): Promise<RemoteResult<SessionRenameValue>>
   fork(request: SessionForkRequest): Promise<RemoteResult<SessionForkValue>>
   prompt(request: SessionPromptRequest, signal?: AbortSignal): Promise<RemoteResult<SessionPromptValue>>
+  promptAdmission(request: SessionPromptAdmissionRequest, signal?: AbortSignal): Promise<RemoteResult<SessionPromptAdmissionValue>>
   attachment(request: SessionAttachmentRequest): Promise<RemoteResult<SessionAttachmentValue>>
   updateQueue(request: SessionUpdateQueueRequest): Promise<RemoteResult<SessionUpdateQueueValue>>
   cancel(request: SessionCancelRequest): Promise<RemoteResult<SessionCancelValue>>
@@ -367,6 +370,9 @@ export function createSessionTestRemote(
     prompt: (request, signal = new AbortController().signal) => remoteResult(
       () => direct.prompt(request, signal),
       signal,
+    ),
+    promptAdmission: (request, signal = new AbortController().signal) => remoteResult(
+      () => direct.promptAdmission(request, signal), signal,
     ),
     attachment: request => remoteResult(() => direct.attachment(request)),
     updateQueue: request => remoteResult(() => direct.updateQueue(request)),

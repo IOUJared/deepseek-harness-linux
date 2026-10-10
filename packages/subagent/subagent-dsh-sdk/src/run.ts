@@ -20,7 +20,7 @@ import {
   SdkProtocolError,
   TransportClosedError,
 } from '@deepseek-ai/dsh-sdk-client'
-import type { ContentBlock, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { SubagentResult, SubagentRun, SubagentStartRequest, SubagentStopReason } from '@deepseek-ai/dsh-subagent'
 import { AssistantOutputFold, settleRunResult, subprocessRunHandle } from '@deepseek-ai/dsh-subagent'
@@ -48,6 +48,10 @@ export interface SdkRunSpec {
   model: string
   /** Optional adapter-owned reasoning effort sent in the child runtime's initialize handshake. */
   reasoningEffort?: ReasoningEffortId
+  /** Optional exact-route service tier sent in initialize; omitted when not selected. */
+  serviceTier?: ServiceTier
+  /** Optional exact-route text verbosity sent in initialize; omitted when not selected. */
+  textVerbosity?: TextVerbosity
   /** Optional per-request output-token cap sent in the child runtime's initialize handshake. */
   maxTokens?: number
   /**
@@ -250,6 +254,8 @@ export async function startSdkRun(request: SubagentStartRequest, spec: SdkRunSpe
     provider: spec.provider,
     model: spec.model,
     ...spec.reasoningEffort === undefined ? {} : { reasoningEffort: spec.reasoningEffort },
+    ...spec.serviceTier === undefined ? {} : { serviceTier: spec.serviceTier },
+    ...spec.textVerbosity === undefined ? {} : { textVerbosity: spec.textVerbosity },
     ...spec.maxTokens === undefined ? {} : { maxTokens: spec.maxTokens },
   })
 

@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { admitEncodedImages, type EncodedImageAttachment, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, ReasoningEffortId, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, ServiceTier, TextVerbosity, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf, type Scoped } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -77,6 +77,8 @@ export class HarnessSdkJsonRpcServer {
   private provider = 'deepseek-official'
   private model = 'deepseek-official'
   private reasoningEffort: ReturnType<typeof ReasoningEffortId> | undefined
+  private serviceTier: ServiceTier | undefined
+  private textVerbosity: TextVerbosity | undefined
   private maxTokens: number | undefined
   private llmFiber: { dispose(): Promise<void> } | undefined
   private readonly sessions = new Map<string, SessionRecord>()
@@ -139,6 +141,13 @@ export class HarnessSdkJsonRpcServer {
       && (typeof params.reasoningEffort !== 'string' || params.reasoningEffort.length === 0)) {
       throw new TypeError('initialize reasoningEffort must be a non-empty string')
     }
+    if (params.serviceTier !== undefined && params.serviceTier !== 'default' && params.serviceTier !== 'priority') {
+      throw new TypeError('initialize serviceTier must be "default" or "priority"')
+    }
+    if (params.textVerbosity !== undefined
+      && params.textVerbosity !== 'low' && params.textVerbosity !== 'medium' && params.textVerbosity !== 'high') {
+      throw new TypeError('initialize textVerbosity must be "low", "medium", or "high"')
+    }
     if (params.maxTokens !== undefined
       && (!Number.isSafeInteger(params.maxTokens) || params.maxTokens <= 0)) {
       throw new TypeError('initialize maxTokens must be a positive safe integer')
@@ -149,6 +158,8 @@ export class HarnessSdkJsonRpcServer {
     const reasoningEffort = params.reasoningEffort === undefined
       ? undefined
       : ReasoningEffortId(params.reasoningEffort)
+    const serviceTier = params.serviceTier === undefined ? undefined : ServiceTier(params.serviceTier)
+    const textVerbosity = params.textVerbosity === undefined ? undefined : TextVerbosity(params.textVerbosity)
     if (!this.hasAdapterFor(provider)) {
       if (provider !== 'deepseek-official') throw new Error(`no adapter registered for provider "${provider}"`)
       this.llmFiber = await this.ctx.plugin(LlmDeepSeek)
@@ -159,12 +170,16 @@ export class HarnessSdkJsonRpcServer {
       provider,
       model,
       ...reasoningEffort === undefined ? {} : { reasoningEffort },
+      ...serviceTier === undefined ? {} : { serviceTier },
+      ...textVerbosity === undefined ? {} : { textVerbosity },
       ...params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens },
     })
     this.cwd = cwd
     this.provider = provider
     this.model = model
     this.reasoningEffort = reasoningEffort
+    this.serviceTier = serviceTier
+    this.textVerbosity = textVerbosity
     this.maxTokens = params.maxTokens
     this.initialized = true
     return { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } }
@@ -285,6 +300,8 @@ export class HarnessSdkJsonRpcServer {
         provider: this.provider,
         model: this.model,
         ...this.reasoningEffort === undefined ? {} : { reasoningEffort: this.reasoningEffort },
+        ...this.serviceTier === undefined ? {} : { serviceTier: this.serviceTier },
+        ...this.textVerbosity === undefined ? {} : { textVerbosity: this.textVerbosity },
         ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
       },
     })

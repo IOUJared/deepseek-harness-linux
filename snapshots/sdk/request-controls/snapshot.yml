@@ -1,0 +1,9 @@
+version: 1
+scenario: request-controls
+profile: sdk
+composition: request-controls
+recording: authored
+header:
+  class: request-controls
+  changes: 3
+  promptChanges: 1

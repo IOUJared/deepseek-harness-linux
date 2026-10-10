@@ -4,16 +4,17 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createMessage, createUserMessage, ServiceTier, TextVerbosity, userAgent } from '@deepseek-ai/dsh-llm'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
+import { providerRequest } from './provider-request-fixture.ts'
 
 /** One text block, then a tool call truncated by the output-token ceiling. */
 const truncatedToolCallEvents = [
@@ -83,6 +84,39 @@ async function loadComposition(): Promise<{ ctx: Context; settingsPath: string }
 }
 
 describe('llm-pi-ai real dormant composition', () => {
+  it.each(['openai', 'openai-codex'])('carries explicit request controls through Loader, LLM runtime and real %s serializer', async (provider) => {
+    const payload = Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'PUBLIC-account' } })).toString('base64url')
+    vi.stubEnv('PI_COMPOSITION_KEY', provider === 'openai' ? 'PUBLIC-key' : `PUBLIC.${payload}.PUBLIC`)
+    const requests: { url: string; body: unknown }[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      requests.push(await providerRequest(input, init))
+      return new Response(JSON.stringify({ error: { message: 'PUBLIC controlled serializer fixture' } }), { status: 401, headers: { 'content-type': 'application/json' } })
+    })
+    onTestFinished(() => { fetch.mockRestore() })
+    const { ctx, settingsPath } = await loadComposition()
+    await writeFile(settingsPath, [
+      '- id: llm-pi-ai', '  config:', '    providers:', `      ${provider}:`,
+      '        apiKeyEnv: PI_COMPOSITION_KEY', '        transport: sse',
+      ...(provider === 'openai' ? ['        api: openai-responses'] : []),
+      '        models:', '          - id: gpt-6.1-sol', '',
+    ].join('\n'))
+    await vi.waitFor(() => { expect(ctx.llm.listProviders().map(route => route.id)).toEqual([provider]) }, { timeout: 5000 })
+    const info = await ctx.llm.resolveModelInfo(provider, 'gpt-6.1-sol')
+    expect(info.serviceTier?.tiers.map(tier => tier.id)).toEqual(['default', 'priority'])
+    expect(info.textVerbosity?.levels.map(level => level.id)).toEqual(['low', 'medium', 'high'])
+    const result = await assemble(ctx, { provider, model: 'gpt-6.1-sol', messages: [], serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high') })
+    expect(result.finish).toMatchObject({ kind: 'error' })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe(provider === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://chatgpt.com/backend-api/codex/responses')
+    expect(requests[0]?.body).toMatchObject({ model: 'gpt-6.1-sol', service_tier: 'priority', text: { verbosity: 'high' } })
+    await assemble(ctx, { provider, model: 'gpt-6.1-sol', messages: [], serviceTier: ServiceTier('default'), textVerbosity: TextVerbosity('low') })
+    expect(requests[1]?.body).toMatchObject({ service_tier: 'default', text: { verbosity: 'low' } })
+    await assemble(ctx, { provider, model: 'gpt-6.1-sol', messages: [] })
+    expect(requests[2]?.body).not.toHaveProperty('service_tier')
+    if (provider === 'openai-codex') expect(requests[2]?.body).toMatchObject({ text: { verbosity: 'low' } })
+    else expect(requests[2]?.body).not.toHaveProperty('text')
+    expect(requests).toHaveLength(3)
+  })
   it('boots with zero routes and registers one the moment settings supply a profile', async () => {
     vi.stubEnv('PI_COMPOSITION_KEY', '')
     const server = await mockServer([{ events: textEvents }])

@@ -49,6 +49,8 @@ kind: "package-reference"
 | `agents[].id` | 必填 | 稳定标签；未设置 `sessionId` 时，全新会话会生成 `${id}-session-<uuid>` |
 | `agents[].provider` / `agents[].model` | — | 模型路由；分发前两者都必须存在 |
 | `agents[].reasoningEffort` | — | 非空的初始推理强度；`agent/request` 可以覆盖它 |
+| `agents[].serviceTier` | — | 显式确切模型服务等级；省略时保持缺省 |
+| `agents[].textVerbosity` | — | 显式确切模型输出详细程度；省略时保持缺省 |
 | `agents[].maxTokens` | — | 正数的逐请求输出 token 上限 |
 | `agents[].cwd` | — | 全新会话的工作目录 |
 | `agents[].sessionId` | — | 确切身份：首次使用创建，重新挂载时恢复已实体化的历史 |

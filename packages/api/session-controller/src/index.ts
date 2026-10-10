@@ -50,6 +50,8 @@ import type {
   SessionPageRequest,
   SessionPromptRequest,
   SessionPromptValue,
+  SessionPromptAdmissionRequest,
+  SessionPromptAdmissionValue,
   SessionRenameRequest,
   SessionRenameValue,
   SessionSearchRequest,
@@ -198,6 +200,8 @@ export class SessionController extends TypertRemoteService {
           event.data.header.config.provider,
           event.data.header.config.model,
           event.data.header.config.reasoningEffort,
+          event.data.header.config.serviceTier,
+          event.data.header.config.textVerbosity,
         )
       }
       if (event.type !== 'user/message' || event.data.source.kind !== 'user') return
@@ -433,6 +437,17 @@ export class SessionController extends TypertRemoteService {
   prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue> {
     signal.throwIfAborted()
     return this.commands.prompt(request)
+  }
+
+  /**
+   * Read original prompt admission evidence without activating its Agent or retrying a write.
+   * @param request - original Session and client request identities.
+   * @param signal - cancellation for a cold journal observation.
+   * @returns positive evidence, a retained definite rejection, or unknown; absence never permits resend.
+   */
+  @Remote('promptAdmission')
+  promptAdmission(request: SessionPromptAdmissionRequest, signal: AbortSignal): Promise<SessionPromptAdmissionValue> {
+    return this.commands.promptAdmission(request, signal)
   }
 
   /**

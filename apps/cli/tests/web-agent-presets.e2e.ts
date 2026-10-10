@@ -26,7 +26,10 @@ import { bundlePatchPaths, composeEntries } from '@deepseek-ai/dsh-app-boot'
 const SETTINGS_NAMESPACE = 'agent-preset-registry'
 const SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE = 'subagent-model-selection-settings'
 import { applyChildComposition, childSessionMeta } from '@deepseek-ai/dsh-subagent'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ReasoningEffortId, ServiceTier, TextVerbosity, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller/types'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-compaction-basic'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -735,6 +738,119 @@ describe('a user preset declared from the shipped cordis rows', () => {
       }
     } finally {
       await copyCtx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 120_000)
+})
+
+/** External model stand-in; every session, controller, log and loop remains Loader-owned. */
+class RequestControlsAdapter extends LlmAdapter {
+  requests: GenerateOptions[] = []
+
+  constructor(private readonly loopSignals: WeakSet<AbortSignal>) { super() }
+
+  get conversationRequests(): GenerateOptions[] {
+    return this.requests.filter(options => options.signal !== undefined && this.loopSignals.has(options.signal))
+  }
+
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    return ['controlled', 'plain'].map(id => ({ provider, id, name: id }))
+  }
+
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return {
+      provider, id: model, name: model,
+      ...model !== 'controlled' ? {} : {
+        reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }, { id: ReasoningEffortId('high'), name: 'High' }] },
+        serviceTier: { tiers: [{ id: ServiceTier('default'), name: 'Standard' }, { id: ServiceTier('priority'), name: 'Fast' }], defaultTier: ServiceTier('default') },
+        textVerbosity: { levels: [{ id: TextVerbosity('low'), name: 'Low' }, { id: TextVerbosity('high'), name: 'High' }], defaultLevel: TextVerbosity('low') },
+      },
+    }
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.requests.push(options)
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: 'fixture answer' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+describe('model request controls in the shipped Loader composition', () => {
+  it('commits, dispatches, restores and clears exact-model controls without rewriting historical absence', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-web-controls-'))
+    let controlsCtx: Context | undefined
+    const sessionId = SessionId('request-controls-loader')
+    const loopSignals = new WeakSet<AbortSignal>()
+    const observeLoopRequests = (context: Context) => context.on('agent/request', async ({ agent, signal }, next) => {
+      if (agent.id === sessionId) loopSignals.add(signal)
+      return next()
+    })
+    const selected = { provider: 'controls-fixture', model: 'controlled', reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high') }
+    try {
+      controlsCtx = await bootWeb(root)
+      observeLoopRequests(controlsCtx)
+      const adapter = new RequestControlsAdapter(loopSignals)
+      controlsCtx.llm.registerAdapter(['controls-fixture'], adapter)
+      const controller = controlsCtx.sessionController
+      await controller.create({ sessionId, cwd: root, agentPreset: 'minimal' })
+      const agent = controlsCtx.agents.get(sessionId)!
+      const send = async (text: string) => {
+        const request: SessionPromptRequest = { sessionId, mode: 'queue', requestId: randomUUID() as SessionPromptRequest['requestId'], content: [{ type: 'text', text }] }
+        await controller.prompt(request, new AbortController().signal)
+        await agent.whenIdle()
+      }
+      const ack = await controller.selectModel({ sessionId, ...selected })
+      expect(ack.selected).toEqual(selected)
+      expect(agent.session.snapshotEvents().find(event => event.type === 'model/selection')?.data).toEqual(selected)
+      expect(controlsCtx.sessionProjections.snapshot(agent.session).values.modelSelection?.next).toEqual(selected)
+      await send('first')
+      expect(adapter.conversationRequests[0]).toMatchObject(selected)
+      expect(agent.session.requestHeader()?.config).toEqual(selected)
+      expect(controlsCtx.sessionProjections.stateOf(agent.session, 'modelSelection')?.pending).toBeNull()
+      await vi.waitFor(() => expect(controlsCtx!.agentDefaultModel.currentSelection()).toEqual(selected))
+      const profileBefore = await readFile(join(root, 'profiles/spec/cordis.patch.yml'), 'utf8')
+      const eventCount = agent.session.snapshotEvents().length
+      const providerCallCount = adapter.requests.length
+      expect(adapter.conversationRequests).toHaveLength(1)
+      await expect(controller.selectModel({ sessionId, provider: selected.provider, model: 'plain', serviceTier: ServiceTier('priority') })).rejects.toMatchObject({ code: 'session/model-unavailable' })
+      expect(agent.session.snapshotEvents()).toHaveLength(eventCount)
+      expect(adapter.requests).toHaveLength(providerCallCount)
+      expect(await readFile(join(root, 'profiles/spec/cordis.patch.yml'), 'utf8')).toBe(profileBefore)
+      await controller.selectModel({ sessionId, ...selected, reasoningEffort: ReasoningEffortId('low') })
+      await send('same route effort')
+      expect(adapter.conversationRequests[1]).toMatchObject({ ...selected, reasoningEffort: 'low' })
+      await controller.selectModel({ sessionId, ...selected, reasoningEffort: ReasoningEffortId('low'), serviceTier: ServiceTier('default'), textVerbosity: TextVerbosity('low') })
+      await send('changed controls')
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'request/header').at(-1)?.data.reason).toBe('change')
+      expect(agent.session.deriveMessages().filter(message => message.source.kind === 'model-selection')).toEqual([])
+      await vi.waitFor(() => expect(controlsCtx!.agentDefaultModel.currentSelection()).toEqual({ ...selected, reasoningEffort: 'low', serviceTier: 'default', textVerbosity: 'low' }))
+      const historical = agent.session.snapshotEvents()
+      await controlsCtx.fiber.dispose()
+      controlsCtx = await bootWeb(root)
+      observeLoopRequests(controlsCtx)
+      const resumedAdapter = new RequestControlsAdapter(loopSignals)
+      controlsCtx.llm.registerAdapter(['controls-fixture'], resumedAdapter)
+      await controlsCtx.sessionController.prompt({ sessionId, mode: 'queue', requestId: randomUUID() as SessionPromptRequest['requestId'], content: [{ type: 'text', text: 'resume' }] }, new AbortController().signal)
+      const resumed = controlsCtx.agents.get(sessionId)!
+      await resumed.whenIdle()
+      expect(resumed.session.snapshotEvents().slice(0, historical.length)).toEqual(historical)
+      expect(resumedAdapter.conversationRequests[0]).toMatchObject({ serviceTier: 'default', textVerbosity: 'low', reasoningEffort: 'low' })
+      await controlsCtx.sessionController.selectModel({ sessionId, provider: selected.provider, model: 'plain' })
+      await controlsCtx.sessionController.prompt({ sessionId, mode: 'queue', requestId: randomUUID() as SessionPromptRequest['requestId'], content: [{ type: 'text', text: 'plain route' }] }, new AbortController().signal)
+      await resumed.whenIdle()
+      expect(resumedAdapter.conversationRequests[1]).not.toHaveProperty('serviceTier')
+      expect(resumedAdapter.conversationRequests[1]).not.toHaveProperty('textVerbosity')
+      expect(resumed.session.requestHeader()?.config).toEqual({ provider: selected.provider, model: 'plain' })
+      await controlsCtx.sessionController.selectModel({ sessionId, provider: selected.provider, model: selected.model })
+      await controlsCtx.sessionController.prompt({ sessionId, mode: 'queue', requestId: randomUUID() as SessionPromptRequest['requestId'], content: [{ type: 'text', text: 'provider defaults' }] }, new AbortController().signal)
+      await resumed.whenIdle()
+      expect(resumedAdapter.conversationRequests[2]).not.toHaveProperty('serviceTier')
+      expect(resumedAdapter.conversationRequests[2]).not.toHaveProperty('textVerbosity')
+    } finally {
+      await controlsCtx?.fiber.dispose()
+      expect(dirname(root)).toBe(tmpdir())
+      expect(root.startsWith(join(tmpdir(), 'dsh-web-controls-'))).toBe(true)
       await rm(root, { recursive: true, force: true })
     }
   }, 120_000)

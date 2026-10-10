@@ -34,7 +34,7 @@ import type {
   TokenUsage,
   ToolUpdate,
 } from '@deepseek-ai/dsh-llm'
-import { LlmAdapter, LlmError, ReasoningEffortId, expandAssistantStream, offloadedImageText, requestImageHandleText, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, LlmError, ReasoningEffortId, ServiceTier, TextVerbosity, expandAssistantStream, offloadedImageText, requestImageHandleText, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 
 const PACKED_CHUNK_ROW_TYPES = new Set(['text-chunks', 'reasoning-chunks', 'tool-call-chunks'])
@@ -98,6 +98,10 @@ export interface ReplayModelConfig {
   imageRequestTokens?: number
   /** Optional reasoning-effort ids the replay route accepts, in display order. */
   reasoningEfforts?: string[]
+  /** Explicit service tiers accepted by this replay-only exact model. */
+  serviceTiers?: ('default' | 'priority')[]
+  /** Explicit text-output detail levels accepted by this replay-only exact model. */
+  textVerbosityLevels?: ('low' | 'medium' | 'high')[]
   /**
    * Optional effort materialized when callers omit one; must appear in
    * {@link reasoningEfforts} or call resolution rejects the route.
@@ -927,6 +931,12 @@ class ReplayAdapter extends LlmAdapter {
       ...configuredModel?.toolUpdate === undefined
         ? {}
         : { toolUpdate: configuredModel.toolUpdate },
+      ...configuredModel?.serviceTiers === undefined
+        ? {}
+        : { serviceTier: { tiers: configuredModel.serviceTiers.map(id => ({ id: ServiceTier(id), name: id })) } },
+      ...configuredModel?.textVerbosityLevels === undefined
+        ? {}
+        : { textVerbosity: { levels: configuredModel.textVerbosityLevels.map(id => ({ id: TextVerbosity(id), name: id })) } },
       ...configuredModel?.reasoningEfforts === undefined
         ? {}
         : {

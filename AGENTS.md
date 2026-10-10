@@ -80,6 +80,8 @@ website/     VitePress documentation projection
 
 Package groups: [packages/README.md](packages/README.md).
 
+For native frontend/backend integration work, load [harness-verification](.agents/skills/harness-verification/SKILL.md); assign each affected failure to production checks and state their limits. Rust consumers also use `impeccable-rust` when available.
+
 ## Commands
 
 ```sh

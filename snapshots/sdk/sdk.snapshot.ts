@@ -56,12 +56,14 @@ import {
 } from '@deepseek-ai/dsh-session-snapshot'
 import {
   DeepSeekHarness,
+  type DeepSeekHarnessOptions,
   type HarnessNotification,
   type NotificationSubscription,
   type RunResult,
   type SdkPromptContentBlock,
 } from '@deepseek-ai/dsh-sdk-client'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import { ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 
 const corpusRoot = fileURLToPath(new URL('../', import.meta.url))
 
@@ -101,6 +103,8 @@ function dirOf(url: string): string {
 }
 
 interface SdkAssertions {
+  /** Explicit initialize controls exercised by a recorded request-control scenario. */
+  requestControls?: Pick<DeepSeekHarnessOptions, 'serviceTier' | 'textVerbosity'>
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Final response required from a completed turn before updating goldens. */
@@ -125,6 +129,10 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'request-controls': {
+    expectedFinalResponse: 'DONE',
+    requestControls: { serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('high') },
+  },
   'dynamic-tool-updates': {
     expectedFinalResponse: 'DONE',
   },
@@ -613,6 +621,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     cwd,
     provider: route.provider,
     model: route.model,
+    ...assertions.requestControls,
   })
   try {
     const notifications: HarnessNotification[] = []
@@ -829,7 +838,8 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       const retained = scenario.manifest.sessionFormat !== undefined
       const notificationsExpectedPath = join(scenarioDir, retained ? 'notifications.current.expected.jsonl' : 'notifications.expected.jsonl')
       const resultExpectedPath = join(scenarioDir, 'result.expected.json')
-      const hasWireGoldens = existsSync(notificationsExpectedPath) || existsSync(resultExpectedPath)
+      const hasWireGoldens = scenario.name === 'request-controls'
+        || existsSync(notificationsExpectedPath) || existsSync(resultExpectedPath)
       const assertions = SDK_ASSERTIONS[scenario.name] ?? {}
       const writesSessionFixtures = writesCurrentSessionFixtures(scenario.manifest, sessionWriteMode)
 
@@ -848,6 +858,19 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       reconcileCatalogCreationTimes(ordered.map(log => log.content), 'validate')
       const actualContext = contextOf(ordered, cwd)
+      if (scenario.name === 'request-controls') {
+        const events = results.flatMap(result => result.events)
+        const headers = events.filter(event => event.type === 'request/header')
+        expect(headers.map(event => event.data.header.config)).toEqual([
+          { provider: 'controls-fixture', model: 'controlled', reasoningEffort: 'high', serviceTier: 'priority', textVerbosity: 'high' },
+          { provider: 'controls-fixture', model: 'controlled', reasoningEffort: 'low', serviceTier: 'priority', textVerbosity: 'high' },
+          { provider: 'controls-fixture', model: 'controlled', reasoningEffort: 'low', serviceTier: 'default', textVerbosity: 'low' },
+          { provider: 'controls-fixture', model: 'plain' },
+        ])
+        const changes = events.filter(event => event.type === 'user/message'
+          && event.data.source?.kind === 'model-selection')
+        expect(changes, 'same-route request-control changes are not model switches').toHaveLength(1)
+      }
       if (scenario.name === 'dynamic-tool-updates') {
         const selectedTypes = new Set(['request/header', 'request/context', 'developer/message', 'tool/call', 'tool/result'])
         const events = results.flatMap(result => result.events).filter(event => selectedTypes.has(event.type))

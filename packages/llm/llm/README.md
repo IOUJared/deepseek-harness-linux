@@ -60,6 +60,8 @@ After a successful mount, `ctx.llm.listProviders()` reports the registered route
 
 `GenerateOptions.messages` accepts durable `Message` values and request-only `RequestUserInput` values. Request-only inputs carry user-role content with no `id` or `source`; Session writes and Agent delivery still require durable messages. Callers keep auxiliary inputs unchanged until the stream settles. A caller that records its exact request, such as session-title generation, must use durable messages.
 
+Exact models may expose explicit service-tier and text-output-detail controls; unsupported values fail before dispatch and omission never materializes their display defaults. See the [request-control reference](../../../docs/subsystems/llm-streaming.md#the-request-envelope-llmcallconfig-and-the-logged-header).
+
 ### What you can do
 
 - **Stream one model call** — `ctx.llm.stream(options)` yields raw chunks (token-level deltas) for any registered provider and model; consumers assemble them with `BlockAssembler`.

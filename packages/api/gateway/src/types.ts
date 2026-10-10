@@ -69,15 +69,35 @@ export interface TypertRemoteEventInvocation {
 /** Notification or scoped waterfall accepted from the sole Remote Event source. */
 export type TypertRemoteEventDispatch = TypertRemoteEventFrame | TypertRemoteEventInvocation
 
+/** Gateway-owned source backlog with deployment-configured count and serialized JSON byte bounds. */
+export interface TypertRemoteEventBuffer {
+  /**
+   * Snapshot validated JSON; overflow rejects queued and triggering invocations and fails the source.
+   * @param dispatch - Selected Host notification or scoped invocation.
+   * @returns true when admitted or explicitly rejected; false only after normal source shutdown, allowing delegation.
+   * @throws {TypeError} for notification metadata or arguments that are not lossless JSON.
+   */
+  push(dispatch: TypertRemoteEventDispatch): boolean
+  /**
+   * Attach listener cleanup synchronously, including before the first pull. Abort and overflow drain promptly while the reader is paused.
+   * @param cleanup - Source listener disposer, called once; a thrown failure reaches the reader without interrupting draining.
+   * @returns the single-consumer iterable; a second call throws.
+   */
+  iterate(cleanup: () => void): AsyncIterable<TypertRemoteEventDispatch>
+}
+
 /**
- * Open the application-selected event stream for one Client carrier. The
- * factory must attach all incremental Host listeners before it returns; the
- * Gateway publishes its readiness item immediately afterward.
- * @param signal - cancellation shared with the Client stream and registration.
- * @returns the long-lived stream of notifications and scoped waterfall invocations.
+ * Open the application-selected event source for one registration. Attach
+ * listeners before returning; the Gateway publishes Client readiness afterward.
+ * Built-in Remotes uses the supplied buffer. Third-party factories ignoring it
+ * own their producer-side bounds; Gateway still bounds Client and pending data.
+ * @param signal - cancellation owned by the source registration.
+ * @param buffer - Gateway-owned bounded JSON snapshot buffer for this source.
+ * @returns the stream of notifications and scoped waterfall invocations.
  */
 export type TypertRemoteEventSource = (
   signal: AbortSignal,
+  buffer: TypertRemoteEventBuffer,
 ) => AsyncIterable<TypertRemoteEventDispatch>
 
 /** Carrier-facing access to decoded Remote streams and their stable failures. */
@@ -133,6 +153,7 @@ export type TypertGatewayErrorCode =
   | 'gateway/service-unavailable'
   | 'gateway/signature-invalid'
   | 'gateway/uplink-overflow'
+  | 'gateway/event-overflow'
 
 /** Host dispatcher consumed by Connection adapters. */
 export interface TypertGateway {

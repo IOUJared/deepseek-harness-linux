@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-为会话未指定模型的新 agent 提供共享默认 provider 和模型。Provider、模型和推理强度都是即时 Config 字段。保存的选择更新当前 profile patch，并用于后续读取；会话级选择仍由入口负责。
+为会话未指定模型的新 agent 提供共享默认 provider 和模型。Provider、模型、推理强度、服务等级与文本详细程度都是即时 Config 字段。保存的选择更新当前 profile patch，并用于后续读取；会话级选择仍由入口负责。
 
 ## 目录
 
@@ -43,11 +43,11 @@ kind: "package-reference"
 | `provider` | 必填 | 新 agent 使用的已注册提供方路由 |
 | `model` | 必填 | 新 agent 使用的、由提供方持有的模型 id |
 
-生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-agent-default-model) 列出所有接受的字段。`reasoningEffort` 是可选的；保存不含此字段的选择，会从 profile 的完整配置覆盖中移除此字段。
+生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-agent-default-model) 列出所有接受的字段。`reasoningEffort`、`serviceTier` 与 `textVerbosity` 均可省略；保存不含某字段的选择，会从 profile 的完整配置覆盖中移除该字段。省略服务等级或文本详细程度时保持缺省，不会选择显示默认值。
 
 ### 读取与更改默认值
 
-`currentSelection()` 为新创建的 agent 返回一份独立的 `{ provider, model, reasoningEffort? }`；`saveSelection()` 为后续 agent 保存完整选择。
+`currentSelection()` 为新创建的 agent 返回一份独立的 `{ provider, model, reasoningEffort?, serviceTier?, textVerbosity? }`；`saveSelection()` 为后续 agent 保存完整选择。
 
 ```text
 const selection = ctx.agentDefaultModel.currentSelection()

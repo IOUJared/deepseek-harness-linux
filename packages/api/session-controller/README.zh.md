@@ -54,6 +54,10 @@ Session 对象还承载本地提交回显：`session.beginSubmission` 在调用�
 
 正常在线时，transcript 与 steering 回显在 Inbox 接受与领取期间留在 Chat，直到持久消息到达。本地 Chat 消息入档后，其身份保留到 Inbox 水位覆盖 next-turn 或 next-step 领取序号：Chat 已显示真实 Node，而 Chat 与 QueueDock 排除匹配的旧 Inbox 行。其他排队消息照常显示。新的 follow 基线会将已有接收回执的回显按 observed 撤去，使用已接受的附件引用完成结算；尚未确认接收的提交继续保留。待处理或已入档的消息随后由 Host 数据呈现。在领取与入档之间重连时，气泡可能短暂消失；撤去回显只确认接收，不代表执行或失败。
 
+Host 在异步 Agent 或附件工作之前为 `(sessionId, requestId)` 预留提示词接收记录。保留中的相同请求共用原 Promise 与结果；原始投递模式、有序内容、图片元数据、文件 receipt 或时区不同则返回固定的 `session/prompt-conflict`。一个请求只执行一次附件导入、receipt 绑定与 Inbox 插入。现有 `user-rpc` source 可选携带 `promptFingerprint`，即这些原始字段的带版本 SHA-256，不进入模型输入。重启后，Inbox 插入或用户消息中匹配的摘要可确认先前接收；旧记录缺少摘要时仍可给出正向状态，但拒绝把重发载荷视为等价。私有 ledger 最多保留 128 条，只淘汰已结算的明确拒绝或有 journal 证据且未处于 claimed 的回执；未结算、claimed 或结果不明的接收记录不可淘汰，没有可退休记录时拒绝新预留。关闭时同步停止接收，并在释放之前等待已有工作结算。
+
+`session.promptAdmission({sessionId, requestId})` 只读保留的证据、活跃 Inbox 或现有 journal，不激活 Agent、不启动循环、不调用提供方，也不重试写入。返回 `admitting`、`accepted`、保留的明确派发前 `rejected` 代码或 `unknown`。接收证据区分 `queued`、实际观察到的 `claimed`、历史 `admitted` 与已存在 `user/message` 的 `recorded`；它们都不代表提供方执行或完成，接收确认也不是 fsync 屏障。消息领取后、用户历史出现前仍保留正向证据。历史 Inbox 移除不能推断领取或拒绝。首次 Inbox 调用之后的失败在没有正向证据时保持 unknown。缺失、过期、重启不确定性与查询失败都不授予重发权限；调用方保留不可变 intent，不得自动重新入队。
+
 面向用户调用的 `skills/list` 元数据包含胜出提供方可选的指令文件 `path`。输入框可据此预览文件，无需加载每个 skill 的正文或激活冷态 Agent。
 
 Fork 复制 `atSeq` 所选的精确事件前缀，包含切点事件，允许在开放轮次内截取。子会话在合成的 fork 结果和结束事件之前记录继承标记。省略 `atSeq` 时选择最近已结束轮次及其独立尾部，在下一轮次或排队输入之前停止；不存在的事件会被拒绝。聊天操作选择已结束轮次。
@@ -83,6 +87,8 @@ Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以
 当 `connection`、`fs` 与 `attachments` 均被组合时，`SessionMediaReferences` 在鉴权 `connection.fetch` 通道上挂载 `GET|HEAD /api/file?path=<绝对路径>`。它通过 `ctx.fs` 读取普通文件，包括已注册工作区之外的临时路径与远程提供方中的文件。目录包含关系与 MIME 类别均不限制访问；`mime-types` 提供响应类型，未知扩展名使用 `application/octet-stream`。GET 复用 `readBytes` 执行读取前及读取中的字节限制；HEAD 只读取元数据。所有文件均使用 `ctx.attachments.imageLimits.maxImageBytes`（通常为 20 MiB）；超过此上限返回 413。响应包含完整文件，忽略 Range，并携带 `private, no-store`、`nosniff` 与沙箱 CSP，使直接打开的 HTML/SVG 无法以 API 源身份执行脚本。客户端重写位于 `ui-chat`（`AssistantMarkdown`）；音视频文件响应已可用，Markdown 音视频播放器节点仍是独立工作。
 
 GUI 模型选择要求确切提供方／模型对出现在可用目录中；不可用的选择以 `session/model-unavailable` 拒绝。提示词准入保留已保存的路由，不按目录可用性阻断发送，由请求执行报告凭据缺失或模型不可用。`initializeDefaultModel()` 在账号登录后、其他提供方均未配置 API key 时，将第一个可用账号模型保存为默认模型；凭据检查使用已配置的引用，不依赖模型是否可用。提供方没有可用模型时，初始化以 `session/provider-models-unavailable` 拒绝。可用性变化不会替换模型或改写会话选择。
+
+目录公布经过适配器校验的确切模型服务等级与输出详细程度选项。`selectModel` 接受含可选参数的完整选择；省略会清除先前显式参数，不支持的值在提交选择或默认设置前失败。持久投影比较所有参数，并独立于当前可用性保留历史请求设置。
 
 `selectModel` 成功返回表示会话级模型选择已生效，不等待默认 profile 设置保存。默认设置在后台按提交顺序保存；保存失败会记录警告，并保留会话选择。新会话读取最近一次成功保存的默认值。
 

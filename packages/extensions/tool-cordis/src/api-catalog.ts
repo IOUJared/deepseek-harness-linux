@@ -637,6 +637,48 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'codexAccounts',
+    summary: 'Host-only service for an explicitly mounted native account owner.',
+    description: 'Host-only service for an explicitly mounted native account owner.',
+    methods: [
+      {
+        signature: 'abstract describe(): Promise<CodexAccountsDescription>',
+        description: 'Describe accounts without grant contents.',
+        parameters: [],
+        returns: 'committed public metadata.',
+      },
+      {
+        signature: 'abstract beginLogin(request: CodexAccountLogin): Promise<CodexAccountLoginResult>',
+        description: 'Add a new account without replacing selection.',
+        parameters: [{ name: 'request', description: 'human-authorized sign-in interaction.' }],
+        returns: 'newly added unselected account and the exact committed selection epoch.',
+      },
+      {
+        signature: 'abstract cancelLogin(): Promise<void>',
+        description: 'Cancel the active login. @returns after sign-in and staging-key cleanup settle.',
+        parameters: [],
+      },
+      {
+        signature: 'abstract select(id: CodexAccountId, expectedEpoch?: number): Promise<void>',
+        description: 'Select one account only after retiring the previous epoch.',
+        parameters: [{ name: 'id', description: 'account explicitly selected by the human.' }, { name: 'expectedEpoch', description: 'optional committed selection epoch; native commands must supply it.' }],
+        returns: 'after old SDK work drains and selection commits.',
+      },
+      {
+        signature: 'abstract signOut(id: CodexAccountId, expectedEpoch?: number): Promise<void>',
+        description: 'Forget an account without selecting another.',
+        parameters: [{ name: 'id', description: 'account to tombstone and forget.' }, { name: 'expectedEpoch', description: 'optional committed selection epoch; native commands must supply it.' }],
+        returns: 'after drainage and local deletion, not issuer revocation.',
+      },
+      {
+        signature: 'abstract signOutAll(expectedEpoch?: number): Promise<void>',
+        description: 'Forget managed accounts.',
+        parameters: [{ name: 'expectedEpoch', description: 'optional committed selection epoch; native commands must supply it.' }],
+        returns: 'after local deletion; legacy remains untouched and issuer grants are not revoked.',
+      },
+    ],
+  },
+  {
     key: 'commands',
     summary: 'Human-command registry.',
     description: 'Human-command registry. Plain-context definitions are global; definitions registered through a command-injected child of an agent context shadow globals for that agent.',
@@ -2017,6 +2059,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Admit one prompt after explicitly resuming its Session.',
         parameters: [{ name: 'request', description: 'Session identity, prompt content, source metadata, and delivery mode.' }, { name: 'signal', description: 'caller cancellation before prompt admission begins.' }],
         returns: 'acknowledgement that the Agent accepted the prompt.',
+      },
+      {
+        signature: '@Remote(\'promptAdmission\') promptAdmission(request: SessionPromptAdmissionRequest, signal: AbortSignal): Promise<SessionPromptAdmissionValue>',
+        description: 'Read original prompt admission evidence without activating its Agent or retrying a write.',
+        parameters: [{ name: 'request', description: 'original Session and client request identities.' }, { name: 'signal', description: 'cancellation for a cold journal observation.' }],
+        returns: 'positive evidence, a retained definite rejection, or unknown; absence never permits resend.',
       },
       {
         signature: '@Remote(\'attachment\') attachment(request: SessionAttachmentRequest): Promise<SessionAttachmentValue>',
@@ -4498,7 +4546,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentOptions',
-    declaration: 'export interface AgentOptions {\n    provider?: string;\n    model?: string;\n    reasoningEffort?: ReasoningEffortId;\n    maxTokens?: number;\n}',
+    declaration: 'export interface AgentOptions {\n    provider?: string;\n    model?: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTier;\n    textVerbosity?: TextVerbosity;\n    maxTokens?: number;\n}',
   },
   {
     name: 'AgentPresetComposition',
@@ -4761,6 +4809,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ClientArtifactBaseline {\n    readonly path: string;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n    readonly size: number;\n}',
   },
   {
+    name: 'CodexAccountId',
+    declaration: 'export type CodexAccountId = Branded<\'CodexAccountId\'>;',
+  },
+  {
+    name: 'CodexAccountLogin',
+    declaration: 'export interface CodexAccountLogin {\n    readonly label: string;\n    readonly interaction: AuthorizationInteraction;\n    readonly signal?: AbortSignal;\n    readonly expectedEpoch?: number;\n}',
+  },
+  {
+    name: 'CodexAccountLoginResult',
+    declaration: 'export interface CodexAccountLoginResult {\n    readonly account: CodexModelAccount;\n    readonly epoch: number;\n}',
+  },
+  {
+    name: 'CodexAccountsDescription',
+    declaration: 'export interface CodexAccountsDescription {\n    readonly accounts: readonly CodexModelAccount[];\n    readonly selected: CodexAccountId | null;\n    readonly epoch: number;\n    readonly legacy: \'unadopted\' | \'absent\';\n}',
+  },
+  {
+    name: 'CodexModelAccount',
+    declaration: 'export interface CodexModelAccount {\n    readonly opaqueId: CodexAccountId;\n    readonly label: string;\n    readonly email: string | null;\n    readonly plan: string | null;\n}',
+  },
+  {
     name: 'CollectedOutput',
     declaration: 'export interface CollectedOutput {\n    text: string;\n    truncated: boolean;\n    spillPath?: string;\n}',
   },
@@ -4934,7 +5002,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ContinuableSubagentDescriptorData',
-    declaration: 'export interface ContinuableSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'continuable\';\n    readonly label: string;\n    readonly agentProvider?: string;\n    readonly agentModel?: string;\n    readonly agentReasoningEffort?: ReasoningEffortId;\n    readonly persona?: string;\n    readonly toolFilter?: ToolRestriction;\n}',
+    declaration: 'export interface ContinuableSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'continuable\';\n    readonly label: string;\n    readonly agentProvider?: string;\n    readonly agentModel?: string;\n    readonly agentReasoningEffort?: ReasoningEffortId;\n    readonly agentServiceTier?: ServiceTier;\n    readonly agentTextVerbosity?: TextVerbosity;\n    readonly persona?: string;\n    readonly toolFilter?: ToolRestriction;\n}',
   },
   {
     name: 'CordisDynamicPackageId',
@@ -5318,7 +5386,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTier;\n    textVerbosity?: TextVerbosity;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -5654,7 +5722,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmCallConfig',
-    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
+    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTier;\n    textVerbosity?: TextVerbosity;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
   {
     name: 'LlmCallConfigAdapterDefaults',
@@ -5697,6 +5765,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface LlmModelReasoningInfo {\n    efforts: readonly LlmReasoningEffortInfo[];\n    defaultEffort?: ReasoningEffortId;\n}',
   },
   {
+    name: 'LlmModelServiceTierInfo',
+    declaration: 'export interface LlmModelServiceTierInfo {\n    tiers: readonly LlmServiceTierInfo[];\n    defaultTier?: ServiceTier;\n}',
+  },
+  {
+    name: 'LlmModelTextVerbosityInfo',
+    declaration: 'export interface LlmModelTextVerbosityInfo {\n    levels: readonly LlmTextVerbosityInfo[];\n    defaultLevel?: TextVerbosity;\n}',
+  },
+  {
     name: 'LlmProviderInfo',
     declaration: 'export interface LlmProviderInfo {\n    id: string;\n    name: string;\n}',
   },
@@ -5706,11 +5782,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmResolvedModelInfo',
-    declaration: 'export interface LlmResolvedModelInfo extends LlmModelInfo {\n    context?: LlmModelContext;\n    defaultMaxTokens?: number;\n    reasoning?: LlmModelReasoningInfo;\n    systemPromptUpdate?: SystemPromptUpdate;\n    toolUpdate?: ToolUpdate;\n}',
+    declaration: 'export interface LlmResolvedModelInfo extends LlmModelInfo {\n    context?: LlmModelContext;\n    defaultMaxTokens?: number;\n    reasoning?: LlmModelReasoningInfo;\n    serviceTier?: LlmModelServiceTierInfo;\n    textVerbosity?: LlmModelTextVerbosityInfo;\n    systemPromptUpdate?: SystemPromptUpdate;\n    toolUpdate?: ToolUpdate;\n}',
   },
   {
     name: 'LlmRuntime',
     declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions) /* …truncated — full shape in source */',
+  },
+  {
+    name: 'LlmServiceTierInfo',
+    declaration: 'export interface LlmServiceTierInfo {\n    id: ServiceTier;\n    name: string;\n    description?: string;\n}',
+  },
+  {
+    name: 'LlmTextVerbosityInfo',
+    declaration: 'export interface LlmTextVerbosityInfo {\n    id: TextVerbosity;\n    name: string;\n    description?: string;\n}',
   },
   {
     name: 'LocalAtInput',
@@ -5886,7 +5970,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
+    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly serviceTier?: ModelServiceTier;\n    readonly textVerbosity?: ModelTextVerbosity;\n}',
   },
   {
     name: 'ModelMessageSource',
@@ -5911,6 +5995,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ModelReasoningEffort',
     declaration: 'export interface ModelReasoningEffort {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'ModelServiceTier',
+    declaration: 'export interface ModelServiceTier {\n    readonly tiers: readonly {\n        readonly id: \'default\' | \'priority\';\n        readonly name: string;\n        readonly description?: string;\n    }[];\n    readonly defaultTier?: \'default\' | \'priority\';\n}',
+  },
+  {
+    name: 'ModelTextVerbosity',
+    declaration: 'export interface ModelTextVerbosity {\n    readonly levels: readonly {\n        readonly id: \'low\' | \'medium\' | \'high\';\n        readonly name: string;\n        readonly description?: string;\n    }[];\n    readonly defaultLevel?: \'low\' | \'medium\' | \'high\';\n}',
   },
   {
     name: 'ModEvents',
@@ -6565,6 +6657,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ServerResponse {\n    readonly type: \'server-response\';\n    readonly rpcId: RpcId;\n    readonly result: ConnectionRpcResult<unknown>;\n}',
   },
   {
+    name: 'ServiceTier',
+    declaration: 'export type ServiceTier = (\'default\' | \'priority\') & Branded<\'ServiceTier\'>;',
+  },
+  {
     name: 'Session',
     declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T>\n    ] : [\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
   },
@@ -6923,6 +7019,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionProjectionValues',
     declaration: 'export type SessionProjectionValues = Partial<SessionProjectionMap> & Readonly<Record<string, SessionProjectionValue>>;',
+  },
+  {
+    name: 'SessionPromptAdmissionRequest',
+    declaration: 'export interface SessionPromptAdmissionRequest {\n    readonly sessionId: SessionId;\n    readonly requestId: SessionRequestId;\n}',
+  },
+  {
+    name: 'SessionPromptAdmissionValue',
+    declaration: 'export type SessionPromptAdmissionValue = {\n    readonly state: \'admitting\';\n} | {\n    readonly state: \'accepted\';\n    readonly evidence: \'memory\' | \'inbox\' | \'journal\';\n    readonly phase: \'queued\' | \'claimed\' | \'admitted\' | \'recorded\';\n    readonly messageId?: MessageId;\n    readonly seq?: number;\n} | {\n    readonly state: \'rejected\';\n    readonly code: \'gateway/bad-request\' | \'session/invalid-time-zone\' | \'session/attachment-invalid\' | \'session/not-found\' | \'session/agent-busy\' | \'session/prompt-closed\' | \'gateway/internal\';\n} | {\n    readonly state: \'unknown\';\n};',
   },
   {
     name: 'SessionPromptRequest',
@@ -7729,6 +7833,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TextProps {\n    readonly color?: string | undefined;\n    readonly bold?: boolean | undefined;\n    readonly dimColor?: boolean | undefined;\n    readonly italic?: boolean | undefined;\n    readonly underline?: boolean | undefined;\n    readonly children?: UiNode | undefined;\n}',
   },
   {
+    name: 'TextVerbosity',
+    declaration: 'export type TextVerbosity = (\'low\' | \'medium\' | \'high\') & Branded<\'TextVerbosity\'>;',
+  },
+  {
     name: 'TimedUserQuestionResult',
     declaration: 'export type TimedUserQuestionResult = AskUserQuestionAnswer | {\n    pending: true;\n    callId: ToolCallId;\n};',
   },
@@ -7997,6 +8105,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface TypertPackageRecord {\n    readonly package: string;\n    readonly face: TypertFace;\n    readonly key: string;\n    readonly model: TypertPackageModel;\n}',
   },
   {
+    name: 'TypertRemoteEventBuffer',
+    declaration: 'export interface TypertRemoteEventBuffer {\n    push(dispatch: TypertRemoteEventDispatch): boolean;\n    iterate(cleanup: () => void): AsyncIterable<TypertRemoteEventDispatch>;\n}',
+  },
+  {
     name: 'TypertRemoteEventContext',
     declaration: 'export interface TypertRemoteEventContext {\n    readonly value: Context;\n    readonly subject: object;\n    readonly agentId: string;\n}',
   },
@@ -8018,7 +8130,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TypertRemoteEventSource',
-    declaration: 'export type TypertRemoteEventSource = (signal: AbortSignal) => AsyncIterable<TypertRemoteEventDispatch>;',
+    declaration: 'export type TypertRemoteEventSource = (signal: AbortSignal, buffer: TypertRemoteEventBuffer) => AsyncIterable<TypertRemoteEventDispatch>;',
   },
   {
     name: 'TypertRemoteService',

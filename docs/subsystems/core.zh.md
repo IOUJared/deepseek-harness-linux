@@ -205,6 +205,10 @@ interface AgentOptions {
   model?: string
   /** Adapter-owned reasoning effort for the selected provider/model route. */
   reasoningEffort?: ReasoningEffortId
+  /** Explicit service tier for the selected exact model. */
+  serviceTier?: ServiceTier
+  /** Explicit text-output detail for the selected exact model. */
+  textVerbosity?: TextVerbosity
   /** Maximum output tokens for each conversation-model request. */
   maxTokens?: number
 }

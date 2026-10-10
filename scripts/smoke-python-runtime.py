@@ -145,6 +145,10 @@ RECOVERY_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "scheduler-recovery"
 )
 RECOVERY_SNAPSHOT_FILENAMES = ("result.json", "requests.json", "session.v4.jsonl")
+REQUEST_CONTROLS_SNAPSHOT_DIRECTORY = (
+    Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "request-controls"
+)
+REQUEST_CONTROLS_SNAPSHOT_FILENAMES = ("result.json", "session.v4.jsonl")
 MCP_SERVER_SCRIPT = """\
 import json
 import os
@@ -778,7 +782,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "sdk-request-controls", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -797,10 +801,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "sdk-request-controls", "runner", "direct"} and args.exe is None:
         parser.error("--exe is required for custom, minimal, dynamic-tools, fs-search, spawn-node, snapshot, recovery, restart, office, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, or all")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring", "sdk-request-controls"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, sdk-request-controls, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -822,6 +826,13 @@ def main() -> None:
         smoke_sdk_live()
         print("smoke-python-runtime: sdk-live passed")
         return
+
+    if args.scenario in {"all", "sdk-request-controls"}:
+        assert args.exe is not None
+        smoke_sdk_request_controls(args.exe.resolve(), args.update_snapshots)
+        if args.scenario == "sdk-request-controls":
+            print("smoke-python-runtime: sdk-request-controls passed")
+            return
 
     with MockModel() as model:
         if args.scenario in {"all", "sdk-authoring"}:
@@ -1511,6 +1522,70 @@ def smoke_sdk_profile_plugin(base_url: str) -> None:
 
         assert result.final_response == PROFILE_PLUGIN_TEXT, result.final_response
         assert_zstd_session_log(dsh_home / "sessions")
+
+
+def smoke_sdk_request_controls(executable: Path, update_snapshots: bool) -> None:
+    """Replay the recorded selection changes through the real Python SDK protocol."""
+    from deepseek_harness import DeepSeekHarness
+
+    source = Path(__file__).resolve().parents[1] / "snapshots/session/request-controls"
+    fixture = selected_snapshot_session_files(source)[0]
+    baseline = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines() if line]
+    user = next(record["data"] for record in baseline if record.get("type") == "user/message")
+    selected = next(record["data"]["header"]["config"] for record in baseline if record.get("type") == "request/header")
+    expected_configs = [record["data"]["header"]["config"] for record in baseline if record.get("type") == "request/header"]
+    with tempfile.TemporaryDirectory(prefix="dsh-python-request-controls-") as temporary:
+        root = Path(temporary).resolve()
+        home = root / "home"
+        sessions = home / "sessions"
+        replay = root / fixture.name
+        replay.write_text(fixture.read_text(encoding="utf-8").replace("{{cwd}}", str(root)), encoding="utf-8")
+        persistence_patch = write_profile_patch(root, "persistence.patch.yml", sessions, [])
+        # Resolve fixture assets explicitly; the isolated SDK profile does not declare the test adapter.
+        patch = root / "request-controls.patch.yml"
+        patch.write_text((source / "cordis.snapshot.yml").read_text(encoding="utf-8").replace(
+            "'./request-controls-driver.mjs'", json.dumps((source / "request-controls-driver.mjs").as_uri()),
+        ).replace("'@deepseek-ai/dsh-llm-replay'", json.dumps((
+            source.parents[2] / "packages/test-support/llm-replay/lib/index.js"
+        ).as_uri())), encoding="utf-8")
+        with DeepSeekHarness(
+            dsh_bin=str(executable), profile="sdk", patches=(str(patch), str(persistence_patch)),
+            dsh_home=str(home), cwd=str(root), provider=selected["provider"], model=selected["model"],
+            reasoning_effort=selected.get("reasoningEffort"), service_tier=selected.get("serviceTier"),
+            text_verbosity=selected.get("textVerbosity"), request_timeout_seconds=60,
+            env={
+                "DSH_SNAPSHOT": "replay", "DSH_SNAPSHOT_FILE": str(replay), "DSH_TELEMETRY_DISABLED": "1",
+                "DSH_AGENTS_HOME": str(root / ".agents"), "DSH_PERMISSION_MODE": "danger-full-access",
+            },
+        ) as harness:
+            result = harness.run(user["content"], session_id="python-request-controls")
+        logs = read_session_logs(sessions)
+        root_log = logs[result.session_id]
+        actual_configs = [event["data"]["header"]["config"] for event in result.events if event.get("type") == "request/header"]
+        if actual_configs != expected_configs:
+            raise AssertionError(f"Python SDK request controls differ: {actual_configs!r} != {expected_configs!r}")
+        changes = [event for event in result.events if event.get("type") == "user/message"
+                   and event.get("data", {}).get("source", {}).get("kind") == "model-selection"]
+        if result.finish_reason != "completed" or len(changes) != 1:
+            raise AssertionError("Python request controls require completion and exactly one route-change notice")
+        replacements = [(str(root), "{{cwd}}"), (result.session_id, "{{session-root}}")]
+        normalized = project_session_snapshot([normalize_snapshot_value(record, replacements) for record in root_log])
+        content = render_jsonl(normalized)
+        name = snapshot_session_filename(0, session_header_version(content, "Python request controls"))
+        files = {
+            "result.json": json.dumps({
+                "final_response": result.final_response, "finish_reason": result.finish_reason,
+                "requestConfigs": actual_configs, "modelSelectionNoticeCount": len(changes),
+                "eventTypes": [event.get("type") for event in result.events],
+                "notificationMethods": [notification.method for notification in result.notifications],
+            }, indent=2, ensure_ascii=False) + "\n",
+            name: content,
+        }
+        compare_snapshot_files(
+            files, update_snapshots,
+            REQUEST_CONTROLS_SNAPSHOT_DIRECTORY,
+            REQUEST_CONTROLS_SNAPSHOT_FILENAMES, native_writer_output=True,
+        )
 
 
 def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) -> None:

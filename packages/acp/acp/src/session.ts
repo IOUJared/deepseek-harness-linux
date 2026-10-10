@@ -74,7 +74,7 @@ function internalError(detail: string): RequestError {
 /** Restore the latest logged route before falling back to deployment config. */
 function selectionFor(
   logged: {
-    config: { provider: string; model: string; reasoningEffort?: ModelSelection['reasoningEffort'] }
+    config: ModelSelection
     adapterDefaults?: { reasoningEffort?: boolean }
   } | undefined,
   fallback: ModelSelection | undefined,
@@ -87,6 +87,8 @@ function selectionFor(
       ...logged.config.reasoningEffort === undefined || logged.adapterDefaults?.reasoningEffort === true
         ? {}
         : { reasoningEffort: logged.config.reasoningEffort },
+      ...logged.config.serviceTier === undefined ? {} : { serviceTier: logged.config.serviceTier },
+      ...logged.config.textVerbosity === undefined ? {} : { textVerbosity: logged.config.textVerbosity },
     }
 }
 

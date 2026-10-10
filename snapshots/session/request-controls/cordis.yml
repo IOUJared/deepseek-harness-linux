@@ -1,0 +1,4 @@
+# Authored keyless case: no charged or account model endpoint is contacted.
+- insert:
+    - id: request-controls-driver
+      name: './request-controls-driver.mjs'

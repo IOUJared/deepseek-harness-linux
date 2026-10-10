@@ -91,6 +91,12 @@ export class ModelDirectory {
   async select(selection: ModelSelection): Promise<RemoteResult<void>> {
     this.assertAvailable()
     const previous = this.store.getSnapshot().current
+    const sameRoute = previous?.provider === selection.provider && previous.model === selection.model
+    selection = {
+      ...!sameRoute || previous.serviceTier === undefined ? {} : { serviceTier: previous.serviceTier },
+      ...!sameRoute || previous.textVerbosity === undefined ? {} : { textVerbosity: previous.textVerbosity },
+      ...selection,
+    }
     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
     const generation = ++this.generation
@@ -102,6 +108,8 @@ export class ModelDirectory {
       ...selection.reasoningEffort === undefined
         ? {}
         : { reasoningEffort: selection.reasoningEffort },
+      ...selection.serviceTier === undefined ? {} : { serviceTier: selection.serviceTier },
+      ...selection.textVerbosity === undefined ? {} : { textVerbosity: selection.textVerbosity },
     })
     if (this.disposed || generation !== this.generation) {
       return result.ok ? { ok: true, value: undefined } : result

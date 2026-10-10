@@ -44,6 +44,8 @@ export async function buildModelCatalog(
           name: model.name,
           ...(model.description === undefined ? {} : { description: model.description }),
           ...(reasoning === undefined ? {} : { reasoning }),
+          ...(resolved.serviceTier === undefined ? {} : { serviceTier: resolved.serviceTier }),
+          ...(resolved.textVerbosity === undefined ? {} : { textVerbosity: resolved.textVerbosity }),
         }
       }))
       return {

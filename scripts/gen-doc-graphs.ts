@@ -380,6 +380,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Configuration carries references to secrets; providers own the values. Consumers resolve per operation, so a rotated credential reaches the very next request; the settings controller exposes value-free views and write-only storage.',
   },
   {
+    key: 'codexAccounts',
+    pkg: 'llm-pi-ai',
+    title: 'Managed native Codex accounts',
+    mode: 'seam',
+    implementations: ['llm-pi-ai'],
+    consumers: [],
+    note: 'The provider owns the private grant vault and epoch-guarded account lifecycle; native Core consumes value-free descriptions and explicit mutations outside this repository package graph.',
+  },
+  {
     key: 'deepseekAccount',
     pkg: 'deepseek-account',
     title: 'DeepSeek account',

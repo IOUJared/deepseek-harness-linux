@@ -7,9 +7,9 @@
  * @module dsh-llm-pi-ai/login
  */
 
-import type { AuthEvent, AuthPrompt, AuthType, Provider } from '@earendil-works/pi-ai'
+import type { AuthEvent, AuthPrompt, AuthType, Models, Provider } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+import type { AuthorizationInteraction, AuthorizationMethod, AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import { isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
 import { catalogProvider, catalogProviderIds } from './catalog.ts'
 import { recordKeyFor } from './auth.ts'
@@ -44,7 +44,7 @@ function loginMethods(provider: Provider | undefined): AuthorizationMethod[] {
  * @param event - what pi-ai reported.
  * @param session - the attempt to report it to.
  */
-function relay(event: AuthEvent, session: AuthorizationSession): void {
+function relay(event: AuthEvent, session: AuthorizationInteraction): void {
   switch (event.type) {
     case 'info': {
       const link = event.links?.[0]
@@ -109,6 +109,25 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
 }
 
 /**
+ * Run the public SDK login with a caller-owned, already-scoped collection.
+ * @param models - collection whose credential store fixes the destination key.
+ * @param providerId - installed provider id.
+ * @param type - SDK login method.
+ * @param interaction - neutral human interaction callbacks.
+ * @param signal - attempt cancellation.
+ * @returns after the SDK commits the grant through that collection's store.
+ */
+export async function runPiAiLogin(
+  models: Models, providerId: string, type: AuthType, interaction: AuthorizationInteraction, signal: AbortSignal,
+): Promise<void> {
+  await models.login(providerId, type, {
+    signal,
+    notify: (event) => { relay(event, interaction) },
+    prompt: prompt => interaction.prompt(restate(prompt)),
+  })
+}
+
+/**
  * Register one authorization flow per installed provider that ships a login.
  *
  * Registration is unconditional on configuration: a provider has to be signed
@@ -116,9 +135,11 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
  * moment the plugin mounts rather than appearing once a profile does.
  * @param ctx - the plugin context carrying `ctx.authorization`.
  * @param auth - the injectables every collection here is built with.
+ * @param excluded - providers whose sign-in is owned by a separate account lifecycle.
  */
-export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
+export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, excluded?: ReadonlySet<string>): void {
   for (const providerId of catalogProviderIds()) {
+    if (excluded?.has(providerId)) continue
     const provider = catalogProvider(providerId)
     const [first, ...rest] = loginMethods(provider)
     /* v8 ignore next 3 -- every id here names an installed provider and every
@@ -150,11 +171,7 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
         const type: AuthType = session.method === 'oauth' ? 'oauth' : 'api_key'
         // pi-ai persists what the login returns through that same store, which
         // is what makes it the single writer of this record.
-        await models.login(providerId, type, {
-          signal: session.signal,
-          notify: (event) => { relay(event, session) },
-          prompt: prompt => session.prompt(restate(prompt)),
-        })
+        await runPiAiLogin(models, providerId, type, session, session.signal)
       },
     })
   }

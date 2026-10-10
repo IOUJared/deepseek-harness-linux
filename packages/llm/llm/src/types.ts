@@ -6,7 +6,7 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { MessageId, ToolCallId, ProviderRequestId, ReasoningEffortId } from './brand.ts'
+import type { MessageId, ToolCallId, ProviderRequestId, ReasoningEffortId, ServiceTier, TextVerbosity } from './brand.ts'
 import type { Message, UserMessage } from './message.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -387,6 +387,32 @@ export interface LlmModelReasoningInfo {
   defaultEffort?: ReasoningEffortId
 }
 
+/** One exact model's supported service tier. */
+export interface LlmServiceTierInfo {
+  id: ServiceTier
+  name: string
+  description?: string
+}
+
+/** Supported service tiers; the advertised default is informational, not materialized. */
+export interface LlmModelServiceTierInfo {
+  tiers: readonly LlmServiceTierInfo[]
+  defaultTier?: ServiceTier
+}
+
+/** One exact model's supported text-output detail. */
+export interface LlmTextVerbosityInfo {
+  id: TextVerbosity
+  name: string
+  description?: string
+}
+
+/** Supported output detail; the advertised default is informational, not materialized. */
+export interface LlmModelTextVerbosityInfo {
+  levels: readonly LlmTextVerbosityInfo[]
+  defaultLevel?: TextVerbosity
+}
+
 /**
  * How a model applies a system prompt that changes mid-conversation.
  * `'in-history'`: the model reads the latest `system` message at any position
@@ -414,6 +440,10 @@ export interface LlmResolvedModelInfo extends LlmModelInfo {
   defaultMaxTokens?: number
   /** Adapter-owned selectable reasoning levels when exposed. */
   reasoning?: LlmModelReasoningInfo
+  /** Explicit service-tier choices; absent means no selectable tier is exposed. */
+  serviceTier?: LlmModelServiceTierInfo
+  /** Explicit text-output detail choices; absent means no selectable detail is exposed. */
+  textVerbosity?: LlmModelTextVerbosityInfo
   /** Declared mid-conversation system prompt handling; absent means only a leading system message is read. */
   systemPromptUpdate?: SystemPromptUpdate
   /** Declared mid-conversation tool declaration handling; absent means every request declares the complete tool list. */
@@ -514,6 +544,10 @@ export interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Explicit advertised service tier; omission does not choose a tier. */
+  serviceTier?: ServiceTier
+  /** Explicit advertised output detail; omission does not choose a level. */
+  textVerbosity?: TextVerbosity
   /**
    * Ordered conversation messages, exactly as the provider sees them. A
    * loop-built request passes the derived history (dsh-agent-loop), whose

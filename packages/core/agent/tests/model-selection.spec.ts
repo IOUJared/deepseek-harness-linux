@@ -11,6 +11,8 @@ import {
 import {
   createUserMessage,
   ReasoningEffortId,
+  ServiceTier,
+  TextVerbosity,
   type LlmCallConfig,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
@@ -90,6 +92,8 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       reasoningEffort: ReasoningEffortId('high'),
+      serviceTier: ServiceTier('priority'),
+      textVerbosity: TextVerbosity('high'),
     }
     expect((await ctx.systemPrompt.assemble()).variables).toMatchObject({ provider: 'alpha', model: 'a1' })
     selection.current = { provider: 'beta', model: 'b1' }
@@ -99,6 +103,8 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       reasoningEffort: ReasoningEffortId('high'),
+      serviceTier: ServiceTier('priority'),
+      textVerbosity: TextVerbosity('high'),
       temperature: 0.2,
     })
 
@@ -107,6 +113,8 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       reasoningEffort: ReasoningEffortId('max'),
+      serviceTier: ServiceTier('priority'),
+      textVerbosity: TextVerbosity('high'),
       temperature: 0.2,
     }
     await expect(agentEvents(ctx, agent).waterfall(

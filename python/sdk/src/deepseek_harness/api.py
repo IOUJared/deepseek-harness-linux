@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
-from .client import HarnessClient, HarnessConfig
+from .client import HarnessClient, HarnessConfig, _validate_model_controls
 from .errors import SdkProtocolError
 from .models import JsonObject, Notification
 
@@ -22,6 +22,8 @@ class DeepSeekHarnessConfig:
     provider: str = "deepseek-official"
     model: str = "deepseek-v4-flash"
     reasoning_effort: str | None = None
+    service_tier: Literal["default", "priority"] | None = None
+    text_verbosity: Literal["low", "medium", "high"] | None = None
     max_tokens: int | None = None
     cwd: str | None = None
     runtime_cwd: str | None = None
@@ -35,6 +37,9 @@ class DeepSeekHarnessConfig:
     shutdown_timeout_seconds: float | None = 1.0
     base_url: str | None = None
     api_key: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_model_controls(self.service_tier, self.text_verbosity)
 
 
 @dataclass(slots=True)
@@ -109,6 +114,8 @@ class DeepSeekHarness:
             provider=self.config.provider,
             model=self.config.model,
             reasoning_effort=self.config.reasoning_effort,
+            service_tier=self.config.service_tier,
+            text_verbosity=self.config.text_verbosity,
             max_tokens=self.config.max_tokens,
         )
         self._initialized = True

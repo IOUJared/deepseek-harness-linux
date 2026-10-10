@@ -24,7 +24,7 @@ import {
 import { createProcessDeepSeekHarness } from '../../../sdk/client/src/api.ts'
 import type { RuntimeProcessOptions } from '../../../sdk/client/src/launch.ts'
 import type { DeepSeekHarnessOptions } from '@deepseek-ai/dsh-sdk-client'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ServiceTier, TextVerbosity } from '@deepseek-ai/dsh-llm'
 import * as sdk from '../src/index.ts'
 import {
   DEFAULT_DISPOSE_EOF_GRACE_MS,
@@ -68,8 +68,8 @@ afterEach(() => {
   runInternals.createHarness = defaultCreateHarness
 })
 
-/** A parent Agent stub. The SDK backend reads exactly one thing off it: the session header's cwd (the workspace its child inherits). */
-const fakeParent = { id: 'parent', session: { header: { cwd: process.cwd() } } } as unknown as Agent
+/** A parent Agent stub with workspace and pre-request options. */
+const fakeParent = { id: 'parent', options: {}, session: { header: { cwd: process.cwd() }, requestHeader: () => undefined } } as unknown as Agent
 
 function request(text = 'p', signal = new AbortController().signal, agentOptions?: AgentOptions) {
   return {
@@ -216,6 +216,27 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     }
   })
 
+  it.each([true, false])('inherits parent controls only if the SDK route matches (%s)', async (sameRoute) => {
+    const ctx = await setup()
+    onTestFinished(() => ctx.fiber.dispose())
+    const parent = {
+      ...fakeParent,
+      options: {
+        provider: sameRoute ? 'fake-provider' : 'parent-provider', model: 'fake-model',
+        serviceTier: ServiceTier('priority'), textVerbosity: TextVerbosity('low'),
+      },
+    }
+    const run = await ctx.subagents.start('dsh-sdk', { ...request(), parent })
+    await run.result
+    await run.dispose()
+    const options = createdHarnessOptions[0]!
+    if (sameRoute) expect(options).toMatchObject({ serviceTier: 'priority', textVerbosity: 'low' })
+    else {
+      expect(options).not.toHaveProperty('serviceTier')
+      expect(options).not.toHaveProperty('textVerbosity')
+    }
+  })
+
   it('preserves instance defaults around a partial request override', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'subagent-dsh-sdk-partial-route-'))
     const recordFile = join(tmp, 'init.jsonl')
@@ -223,6 +244,8 @@ describe('dsh-subagent-dsh-sdk provider', () => {
       const ctx = await setup({ FAKE_RECORD_INIT: recordFile }, { maxTokens: 4096 })
       const run = await ctx.subagents.start('dsh-sdk', request('partial', new AbortController().signal, {
         reasoningEffort: ReasoningEffortId('high'),
+        serviceTier: ServiceTier('priority'),
+        textVerbosity: TextVerbosity('high'),
       }))
       await run.result
       await run.dispose()
@@ -232,6 +255,8 @@ describe('dsh-subagent-dsh-sdk provider', () => {
         provider: 'fake-provider',
         model: 'fake-model',
         reasoningEffort: 'high',
+        serviceTier: 'priority',
+        textVerbosity: 'high',
         maxTokens: 4096,
       })
       await ctx.fiber.dispose()
